@@ -18,5 +18,10 @@ for diabetes prediction.
 pip install -r requirements.txt
 streamlit run streamlit_diabetes_dashboard.py
 
-### **Link**
+
+
+
+Link to app ----
+
+
 https://diabetes-dashboard-ml.streamlit.app/
