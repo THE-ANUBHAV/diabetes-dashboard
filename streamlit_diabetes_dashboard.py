@@ -160,7 +160,7 @@ page = st.sidebar.radio('Navigation', ['Home', 'Train & Compare', 'Predict'], in
 
 # Show title only on Home/Train pages; Predict page will have its own header
 if page != 'Predict':
-    st.title("Diabetes Models — Comparison & Prediction (Beautiful UI)")
+    st.title("Diabetes Models — Comparison & Prediction
     st.markdown("A Streamlit dashboard to train, compare models and predict diabetes using your dataset.")
 else:
     st.title("Diabetes Risk Prediction")
@@ -168,7 +168,7 @@ else:
 
 # Added enhanced model comparison visualizations
 
-st.title("Diabetes Models — Comparison & Prediction (Beautiful UI)")
+st.title("Diabetes Models — Comparison & Prediction
 st.markdown("A Streamlit dashboard to train, compare models and predict diabetes using your dataset.")
 
 df = load_data()
