@@ -127,28 +127,45 @@ def preprocess_df(df, remove_leakage=False):
 
 
 def evaluate_model(model, X_test, y_test):
+    """Evaluate a trained model and return common metrics and predictions."""
     pred = model.predict(X_test)
     probs = None
     try:
         probs = model.predict_proba(X_test)[:, 1]
     except Exception:
-        # some models may not support predict_proba
+        # some models may not support predict_proba; try decision_function, else zeros
         try:
             probs = model.decision_function(X_test)
+            # decision_function may return shape (n_samples,) or (n_samples,); ensure 1d
+            probs = np.asarray(probs).ravel()
         except Exception:
             probs = np.zeros(len(pred))
 
     acc = accuracy_score(y_test, pred)
     auc = None
     try:
-        auc = roc_auc_score(y_test, probs) if (probs is not None and len(np.unique(y_test)) > 1) else None
+        if probs is not None and len(np.unique(y_test)) > 1:
+            auc = roc_auc_score(y_test, probs)
     except Exception:
         auc = None
+
     cm = confusion_matrix(y_test, pred)
     report = classification_report(y_test, pred, output_dict=True)
     return {'accuracy': acc, 'auc': auc, 'cm': cm, 'report': report, 'pred': pred, 'probs': probs}
 
+# Note: the training function is already defined above (cached variant). Remove the duplicate/garbled train_models below to avoid redefinition.
 # ---- App Layout ----
+# Top-level navigation (separate pages)
+page = st.sidebar.radio('Navigation', ['Home', 'Train & Compare', 'Predict'], index=1)
+
+# Show title only on Home/Train pages; Predict page will have its own header
+if page != 'Predict':
+    st.title("Diabetes Models — Comparison & Prediction (Beautiful UI)")
+    st.markdown("A Streamlit dashboard to train, compare models and predict diabetes using your dataset.")
+else:
+    st.title("Diabetes Risk Prediction")
+    st.markdown("Enter patient details on the left (Simple or Advanced mode) and choose a model to get a risk score.")
+
 # Added enhanced model comparison visualizations
 
 st.title("Diabetes Models — Comparison & Prediction (Beautiful UI)")
@@ -318,107 +335,176 @@ st.sidebar.markdown("Enter patient features to get a diabetes prediction")
 # Build input form dynamically from original df columns (excluding target and removed cols)
 input_cols = [c for c in df.columns if c not in ['id','glyhb','diabetes']]
 # For simplicity, we'll ask a subset of inputs commonly used
-with st.sidebar.form('predict_form'):
-    age = st.number_input('Age', min_value=0, max_value=120, value=50)
-    chol = st.number_input('Cholesterol', value=float(df['chol'].median()))
-    stab_glu = st.number_input('Fasting Glucose (stab.glu)', value=float(df['stab.glu'].median()))
-    hdl = st.number_input('HDL', value=float(df['hdl'].median()))
-    ratio = st.number_input('Ratio', value=float(df['ratio'].median()))
-    weight = st.number_input('Weight', value=float(df['weight'].median()))
-    height = st.number_input('Height', value=float(df['height'].median()))
-    waist = st.number_input('Waist', value=float(df['waist'].median()))
-    hip = st.number_input('Hip', value=float(df['hip'].median()))
-    frame = st.selectbox('Frame', options=df['frame'].dropna().unique().tolist())
-    location = st.selectbox('Location', options=df['location'].dropna().unique().tolist())
-    gender = st.selectbox('Gender', options=df['gender'].dropna().unique().tolist())
+if page == 'Predict':
+    # -------------------------
+    # Predict Page UI (Medical + Futuristic mix)
+    # -------------------------
+    st.markdown("### Diabetes Risk Prediction")
+    st.write("Use **Simple** mode for quick entry or **Advanced** to provide all available features. Choose the trained model and Notebook/Safe mode used during training.")
 
-    submit_pred = st.form_submit_button('Predict')
+    # Layout: left sidebar for inputs, right column for results
+    left, right = st.columns([1, 1])
 
-if submit_pred:
-    if 'models' not in st.session_state:
-        st.error('Train models first using the sidebar "Train & Evaluate Models" button')
-    else:
-        # Create single-row DataFrame
-        inp = pd.DataFrame([{ 'chol': chol, 'stab.glu': stab_glu, 'hdl': hdl, 'ratio': ratio,
-                              'weight': weight, 'height': height, 'waist': waist, 'hip': hip,
-                              'frame': frame, 'location': location, 'gender': gender, 'age': age }])
+    with left:
+        st.subheader("Input Mode & Model")
+        mode = st.radio("Select mode:", ("Simple", "Advanced"), index=0)
+        model_choice = st.selectbox("Model to use for prediction:", options=list(st.session_state.get('models', {}).keys()) if 'models' in st.session_state else ['RandomForest'])
+        notebook_mode = st.checkbox("Use Notebook mode (may include glyhb features, higher accuracy but possible leakage)", value=st.session_state.get('use_leakage', False))
 
-        # Preprocess consistent with training
-        use_leakage_now = st.session_state.get('use_leakage', False)
-        # If leakage removed during training, drop those fields
-        if not use_leakage_now:
-            for c in ['glyhb','ratio','stab.glu']:
-                if c in inp.columns:
-                    inp = inp.drop(columns=[c])
+        st.markdown("---")
+        st.subheader("Patient Details")
+        # Simple mode inputs
+        if mode == 'Simple':
+            age = st.number_input('Age', min_value=0, max_value=120, value=50)
+            gender = st.selectbox('Gender', options=df['gender'].dropna().unique().tolist())
+            weight = st.number_input('Weight (kg)', value=float(df['weight'].median()))
+            height = st.number_input('Height (cm)', value=float(df['height'].median()))
+            chol = st.number_input('Cholesterol', value=float(df['chol'].median()))
+            hdl = st.number_input('HDL', value=float(df['hdl'].median()))
+            sys_bp = st.number_input('Systolic BP (bp.1s)', value=float(df['bp.1s'].median()) if 'bp.1s' in df.columns else 120.0)
+            dia_bp = st.number_input('Diastolic BP (bp.1d)', value=float(df['bp.1d'].median()) if 'bp.1d' in df.columns else 80.0)
+            waist = st.number_input('Waist (cm)', value=float(df['waist'].median()))
+            hip = st.number_input('Hip (cm)', value=float(df['hip'].median()))
+            frame = st.selectbox('Frame', options=df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'])
+            location = st.selectbox('Location', options=df['location'].dropna().unique().tolist())
+        else:
+            # Advanced: build inputs dynamically from dataframe columns (excluding id and target)
+            adv_cols = [c for c in df.columns if c not in ['id','glyhb','Outcome','diabetes']]
+            adv_vals = {}
+            for c in adv_cols:
+                if df[c].dtype.kind in 'biufc':
+                    adv_vals[c] = st.number_input(f"{c}", value=float(df[c].median()) if not df[c].isna().all() else 0.0)
+                else:
+                    vals = df[c].dropna().unique().tolist()
+                    adv_vals[c] = st.selectbox(f"{c}", options=vals)
 
-        # Impute categorical
-        cat_cols = inp.select_dtypes(include=['object']).columns.tolist()
-        num_cols = inp.select_dtypes(include=['number']).columns.tolist()
+        st.markdown("---")
+        predict_button = st.button('Predict Risk', type='primary')
 
-        if len(num_cols) > 0:
-            num_imp = SimpleImputer(strategy='median')
-            inp[num_cols] = num_imp.fit_transform(inp[num_cols])
+    with right:
+        st.subheader("Prediction Result")
+        result_area = st.empty()
+        explanation_area = st.empty()
 
-        if len(cat_cols) > 0:
-            cat_imp = SimpleImputer(strategy='most_frequent')
-            inp[cat_cols] = cat_imp.fit_transform(inp[cat_cols])
-            inp = pd.get_dummies(inp, columns=cat_cols, drop_first=True)
+    # Prediction handling
+    if predict_button:
+        # Build input row
+        if mode == 'Simple':
+            inp = pd.DataFrame([{
+                'age': age,
+                'gender': gender,
+                'height': height,
+                'weight': weight,
+                'chol': chol,
+                'hdl': hdl,
+                'bp.1s': sys_bp if 'bp.1s' in df.columns else np.nan,
+                'bp.1d': dia_bp if 'bp.1d' in df.columns else np.nan,
+                'waist': waist if 'waist' in df.columns else np.nan,
+                'hip': hip if 'hip' in df.columns else np.nan,
+                'frame': frame,
+                'location': location
+            }])
+        else:
+            inp = pd.DataFrame([adv_vals])
 
-        # Align features to training feature names
-        feat_names = st.session_state['feature_names']
-        for fn in feat_names:
-            if fn not in inp.columns:
-                inp[fn] = 0
+        # Ensure columns exist and align with training features
+        # Preprocess like training pipeline
+        use_leak = notebook_mode
+        # Prepare a copy of df to use preprocess_df for consistent encoding
+        try:
+            X_all, y_all, feat_names, scaler = preprocess_df(df, remove_leakage=not use_leak)
+        except Exception as e:
+            st.error(f"Preprocessing failed: {e}")
+            raise
+
+        # If notebook_mode (use_leak True) we included glyhb-derived features in training; but user inputs likely lack glyhb, so warn
+        if use_leak:
+            st.warning('Notebook mode may expect glyhb-derived features which are not available from manual input — predictions may be less reliable.')
+
+        # Align input columns to feat_names
+        # Impute missing columns in inp
+        for col in feat_names:
+            if col not in inp.columns:
+                inp[col] = 0
         inp = inp[feat_names]
 
-        # Scale
-        scaler = st.session_state['scaler']
-        inp_scaled = scaler.transform(inp)
+        # Coerce numeric
+        inp = inp.apply(pd.to_numeric, errors='coerce').fillna(0)
 
-        model = st.session_state['models'][selected_model_name]
-        pred = model.predict(inp_scaled)[0]
-        prob = None
-        try:
-            prob = model.predict_proba(inp_scaled)[0][1]
-        except Exception:
-            try:
-                prob = model.decision_function(inp_scaled)[0]
-            except Exception:
-                prob = None
-
-        st.success(f"Predicted class: {pred} \nProbability (if available): {prob}")
-
-        # SHAP explanation (if available and supported)
-        if SHAP_AVAILABLE:
-            try:
-                # Only run SHAP for supported model types (tree-based or linear)
-                supported_for_shap = ['RandomForest', 'XGBoost', 'LightGBM', 'LogisticRegression']
-                if selected_model_name in supported_for_shap:
-                    st.subheader('Local SHAP Explanation')
-                    # pick appropriate explainer
-                    if selected_model_name in ['RandomForest','LightGBM','XGBoost']:
-                        explainer = shap.TreeExplainer(model)
-                    elif selected_model_name == 'LogisticRegression':
-                        explainer = shap.LinearExplainer(model, model._validate_data(inp_scaled, reset=False))
-                    else:
-                        explainer = None
-
-                    if explainer is not None:
-                        shap_vals = explainer.shap_values(inp)
-                        try:
-                            # summary / waterfall
-                            st.pyplot(shap.plots.waterfall(shap.Explanation(values=shap_vals[0], base_values=explainer.expected_value, data=inp), show=False))
-                        except Exception:
-                            # fallback: summary plot
-                            shap.summary_plot(shap_vals, inp, show=False)
-                            st.pyplot(plt.gcf())
-                    else:
-                        st.info('SHAP explainer not available for this model type.')
-                else:
-                    st.info(f'SHAP explanation not supported for {selected_model_name}.')
-            except Exception as e:
-                st.info('SHAP explanation failed: ' + str(e))
+        # Scale using the scaler from training (we stored scaler in session_state during training)
+        if 'scaler' in st.session_state:
+            scaler_used = st.session_state['scaler']
         else:
-            st.info('SHAP not installed. Install shap to get feature explanations.')
+            scaler_used = scaler
+        inp_scaled = scaler_used.transform(inp)
 
-st.markdown("---")
+        # Get model
+        if 'models' not in st.session_state or model_choice not in st.session_state['models']:
+            st.error('Model not trained yet. Please train models first on Train & Compare page.')
+        else:
+            model = st.session_state['models'][model_choice]
+            # Predict
+            try:
+                prob = None
+                if hasattr(model, 'predict_proba'):
+                    prob = model.predict_proba(inp_scaled)[:,1][0]
+                else:
+                    # fallback to decision_function
+                    prob = model.decision_function(inp_scaled)[0]
+                    # map decision to 0-1 via sigmoid
+                    prob = 1/(1+np.exp(-prob))
+            except Exception as e:
+                st.error(f"Model prediction failed: {e}")
+                raise
+
+            cls = int(prob >= 0.5)
+            # Risk category
+            if prob < 0.3:
+                cat = ('Low', 'green', '😀', 'Keep healthy — low risk')
+            elif prob < 0.6:
+                cat = ('Moderate', 'orange', '🙂', 'Consider lifestyle changes')
+            elif prob < 0.8:
+                cat = ('High', 'red', '⚠️', 'Seek medical advice')
+            else:
+                cat = ('Very High', 'darkred', '🚨', 'Immediate medical evaluation recommended')
+
+            # Animated progress meter
+            p = int(round(prob*100))
+            prog = st.progress(0)
+            for i in range(p+1):
+                prog.progress(i)
+            result_area.markdown(f"### Predicted class: **{cls}**  ")
+            result_area.markdown(f"### Probability: **{prob:.3f}** ({p}%)")
+            # colored badge
+            result_area.markdown(f"<h3 style='color:{cat[1]};'> {cat[2]} {cat[0]} - {cat[3]}</h3>", unsafe_allow_html=True)
+
+            # Show simple feature contribution (for tree models use SHAP if available)
+            if SHAP_AVAILABLE and model_choice in ['RandomForest','XGBoost','LightGBM','LogisticRegression']:
+                try:
+                    explanation_area.subheader('Local explanation (SHAP)')
+                    if model_choice in ['RandomForest','LightGBM','XGBoost']:
+                        explainer = shap.TreeExplainer(model)
+                        shap_vals = explainer.shap_values(inp)
+                        # summary plot
+                        fig_shap = shap.plots.waterfall(shap.Explanation(values=shap_vals[0], base_values=explainer.expected_value, data=inp), show=False)
+                        explanation_area.pyplot(plt.gcf())
+                    else:
+                        explainer = shap.LinearExplainer(model, inp)
+                        shap_vals = explainer.shap_values(inp)
+                        shap.summary_plot(shap_vals, inp, show=False)
+                        explanation_area.pyplot(plt.gcf())
+                except Exception as e:
+                    explanation_area.info('SHAP explanation failed: ' + str(e))
+            else:
+                explanation_area.info('SHAP explanation not available for this model or shap not installed.')
+
+            # Download result
+            out = inp.copy()
+            out['predicted_class'] = cls
+            out['predicted_prob'] = prob
+            csv = out.to_csv(index=False)
+            st.download_button('Download prediction (CSV)', csv, file_name='prediction.csv', mime='text/csv')
+
+    st.markdown("---")
+
+
