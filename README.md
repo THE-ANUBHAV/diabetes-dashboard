@@ -24,4 +24,6 @@ streamlit run streamlit_diabetes_dashboard.py
 Link to app ----
 
 
-https://diabetes-dashboard-ml.streamlit.app/
+[Live Diabetes Dashboard](https://diabetes-dashboard-ml.streamlit.app/)
+
+
