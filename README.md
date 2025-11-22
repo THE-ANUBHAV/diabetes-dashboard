@@ -17,3 +17,6 @@ for diabetes prediction.
 ```bash
 pip install -r requirements.txt
 streamlit run streamlit_diabetes_dashboard.py
+
+### **Link**
+https://diabetes-dashboard-ml.streamlit.app/
