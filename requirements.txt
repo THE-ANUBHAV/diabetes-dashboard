@@ -4,8 +4,8 @@ numpy
 scikit-learn
 matplotlib
 seaborn
+plotly
+reportlab
 xgboost
 lightgbm
 shap
-plotly
-reportlab
