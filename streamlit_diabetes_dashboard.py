@@ -52,7 +52,7 @@ except Exception:
     SHAP_AVAILABLE = False
 
 # ---------------- Config ----------------
-st.set_page_config(page_title="Diabetes Dashboard — Professional", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="GlycoWatch — Early-Stage Diabetes Risk Detection Platfor", layout="wide", initial_sidebar_state="expanded")
 DATA_PATH = "diabetes (1).csv"
 RANDOM_STATE = 42
 
