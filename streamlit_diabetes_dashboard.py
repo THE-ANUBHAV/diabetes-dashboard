@@ -1,11 +1,13 @@
 # streamlit_diabetes_dashboard.py
 """
-Final Dashboard (with SVM)
-- Robust preprocessing & feature alignment
-- Models: RandomForest, XGBoost, LightGBM, SVM
-- SHAP explanations with safe fallbacks
-- Plotly gauge + interactive SHAP views
-- AI Diagnosis Chatbot (local)
+Professional-grade Diabetes Dashboard
+- SMOTE oversampling, class balancing, calibration
+- Models: RandomForest, XGBoost, LightGBM, SVM (SVM tuned)
+- Calibrated probabilities (CalibratedClassifierCV)
+- Robust preprocessing & feature-alignment
+- SHAP interactive (TreeExplainer/KernelExplainer)
+- 3D-like Plotly SHAP visualization
+- AI Diagnosis Chatbot (local rule-based)
 - Prediction history + PDF report
 """
 
@@ -14,31 +16,34 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import io, base64
+import io
 from datetime import datetime
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-from sklearn.linear_model import LogisticRegression
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix, classification_report, roc_curve
+from sklearn.pipeline import Pipeline
+from sklearn.utils import compute_class_weight
+from imblearn.over_sampling import SMOTE
 import plotly.graph_objects as go
 import plotly.express as px
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import warnings
+warnings.filterwarnings("ignore")
 
-# Optional libs
+# optional libs
 try:
     from xgboost import XGBClassifier
 except Exception:
     XGBClassifier = None
-
 try:
     from lightgbm import LGBMClassifier
 except Exception:
     LGBMClassifier = None
-
 try:
     import shap
     SHAP_AVAILABLE = True
@@ -47,11 +52,11 @@ except Exception:
     SHAP_AVAILABLE = False
 
 # ---------------- Config ----------------
-st.set_page_config(page_title="Diabetes Dashboard (Final)", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Diabetes Dashboard — Professional", layout="wide", initial_sidebar_state="expanded")
 DATA_PATH = "diabetes (1).csv"
 RANDOM_STATE = 42
 
-# ---------------- Utilities ----------------
+# ---------------- Helpers ----------------
 @st.cache_data
 def load_data(path=DATA_PATH):
     df = pd.read_csv(path)
@@ -65,94 +70,161 @@ def clamp(v, min_v, max_v):
         return min_v
     return max(min_v, min(max_v, v))
 
-def preprocess_df_for_training(df, remove_leakage=True):
-    """
-    Preprocess full dataset for training:
-    - creates 'diabetes' target from glyhb
-    - drops id and leakage columns if remove_leakage True
-    - imputes numeric/categorical, encodes categorical via get_dummies
-    - scales features and returns X_scaled, y, feature_names, scaler
-    """
+def create_target_and_clean(df):
     df = df.copy()
     df.columns = df.columns.str.strip()
     if 'glyhb' not in df.columns:
-        raise ValueError("Dataset must contain 'glyhb' column.")
+        raise ValueError("Dataset must contain 'glyhb' column to create target.")
     df['diabetes'] = (df['glyhb'] >= 6.5).astype(int)
+    return df
 
-    leakage_cols = ['glyhb', 'ratio', 'stab.glu']
+def preprocessing_no_scale(df_input, remove_leakage=True):
+    """
+    Preprocess but DON'T scale — returns DataFrame X_proc and y series.
+    This is used for feature alignment then scaling with training scaler.
+    """
+    df = df_input.copy()
+    df.columns = df.columns.str.strip()
+    df = create_target_and_clean(df) if 'diabetes' not in df.columns else df
+    leakage_cols = ['glyhb','ratio','stab.glu']
     drop_cols = ['id']
     if remove_leakage:
         drop_cols += leakage_cols
-
     X = df.drop(columns=[c for c in drop_cols + ['diabetes'] if c in df.columns], errors='ignore')
     y = df['diabetes']
-
+    # Impute numeric/categorical
     cat_cols = X.select_dtypes(include=['object','category']).columns.tolist()
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-
     if len(num_cols) > 0:
         num_imp = SimpleImputer(strategy='median')
         X[num_cols] = num_imp.fit_transform(X[num_cols])
-
     if len(cat_cols) > 0:
         cat_imp = SimpleImputer(strategy='most_frequent')
         X[cat_cols] = cat_imp.fit_transform(X[cat_cols])
         X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
-
     X = X.apply(pd.to_numeric, errors='coerce').fillna(0)
+    return X, y
 
+def preprocess_for_training(df_full, remove_leakage=True):
+    """Do full preprocessing including scaling. Returns X_scaled (np), y, feature_names, scaler, X_df_unscaled"""
+    X_df, y = preprocessing_no_scale(df_full, remove_leakage=remove_leakage)
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X_df)
+    feature_names = X_df.columns.tolist()
+    return X_scaled, y, feature_names, scaler, X_df
 
-    return X_scaled, y, X.columns.tolist(), scaler
+def align_features_for_prediction(user_raw_df, df_training_raw, feature_names, scaler, remove_leakage=True):
+    """
+    Robust alignment:
+    - concatenate user row + training raw df
+    - run preprocessing_no_scale to get consistent dummy columns
+    - extract first row (user) in unscaled space
+    - ensure all feature_names exist (fill zeros)
+    - scale using provided scaler (trained on training X_df)
+    """
+    # concat with training raw to get consistent categories and dummies
+    df_temp = pd.concat([user_raw_df.reset_index(drop=True), df_training_raw.reset_index(drop=True)], ignore_index=True)
+    X_all_unscaled, _ = preprocessing_no_scale(df_temp, remove_leakage=remove_leakage)
+    # First row is user (unscaled preprocessed)
+    user_unscaled = X_all_unscaled.iloc[[0]].copy()
+    # Ensure training feature_names exist
+    for col in feature_names:
+        if col not in user_unscaled.columns:
+            user_unscaled[col] = 0.0
+    user_unscaled = user_unscaled[feature_names]
+    # scale using training scaler
+    user_scaled = scaler.transform(user_unscaled)
+    return user_scaled
 
-def train_models(X_train, y_train, models_to_train=None):
-    models = {}
-    if models_to_train is None:
-        models_to_train = ['RandomForest','XGBoost','LightGBM','SVM']
+def calibrate_model(estimator, X_train, y_train, cv=5):
+    """Wrap estimator in CalibratedClassifierCV using sigmoid and cv folds."""
+    calibrated = CalibratedClassifierCV(estimator, cv=cv, method='sigmoid')
+    calibrated.fit(X_train, y_train)
+    return calibrated
+
+def train_with_smote_and_calibration(X_scaled, y, models_to_train):
+    """
+    X_scaled : numpy array scaled features
+    y : series
+    models_to_train : list of model names to train
+    Returns: dict of trained calibrated models and evaluation-ready artifacts
+    """
+    results = {}
+    # Split train/test stratified
+    X_tr, X_te, y_tr, y_te = train_test_split(X_scaled, y, test_size=0.20, stratify=y, random_state=RANDOM_STATE)
+    # Apply SMOTE on training set
+    sm = SMOTE(random_state=RANDOM_STATE)
+    X_res, y_res = sm.fit_resample(X_tr, y_tr)
+    # training class counts
+    neg = (y_res==0).sum(); pos = (y_res==1).sum()
+    scale_pos_weight = (neg / pos) if pos>0 else 1.0
+
+    trained_models = {}
+    # RandomForest with balanced class weight
     if 'RandomForest' in models_to_train:
-        rf = RandomForestClassifier(n_estimators=300, max_depth=12, random_state=RANDOM_STATE)
-        rf.fit(X_train, y_train)
-        models['RandomForest'] = rf
+        rf = RandomForestClassifier(n_estimators=300, max_depth=12, class_weight='balanced', random_state=RANDOM_STATE)
+        rf_cal = CalibratedClassifierCV(rf, cv=5, method='sigmoid')
+        rf_cal.fit(X_res, y_res)
+        trained_models['RandomForest'] = rf_cal
+
+    # XGBoost (if available) with scale_pos_weight
     if 'XGBoost' in models_to_train and XGBClassifier is not None:
-        xgb = XGBClassifier(n_estimators=300, learning_rate=0.03, max_depth=5, subsample=0.75,
-                             colsample_bytree=0.8, gamma=0.3, reg_alpha=0.2, reg_lambda=1.0,
-                             min_child_weight=2, eval_metric='logloss', use_label_encoder=False, random_state=RANDOM_STATE)
-        xgb.fit(X_train, y_train)
-        models['XGBoost'] = xgb
+        xgb = XGBClassifier(
+            n_estimators=300, learning_rate=0.03, max_depth=5,
+            subsample=0.75, colsample_bytree=0.8, gamma=0.3,
+            reg_alpha=0.2, reg_lambda=1.0, min_child_weight=2,
+            random_state=RANDOM_STATE, use_label_encoder=False,
+            scale_pos_weight=scale_pos_weight, eval_metric='logloss'
+        )
+        xgb_cal = CalibratedClassifierCV(xgb, cv=5, method='sigmoid')
+        xgb_cal.fit(X_res, y_res)
+        trained_models['XGBoost'] = xgb_cal
+
+    # LightGBM (if available) - use class_weight param via 'class_weight' when constructing classifier; however LGBM accepts 'class_weight' or 'is_unbalance'
     if 'LightGBM' in models_to_train and LGBMClassifier is not None:
-        lgb = LGBMClassifier(n_estimators=500, learning_rate=0.03, num_leaves=31, min_child_samples=30,
-                              subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.3, random_state=RANDOM_STATE)
-        lgb.fit(X_train, y_train)
-        models['LightGBM'] = lgb
+        lgb = LGBMClassifier(n_estimators=500, learning_rate=0.03, num_leaves=31,
+                             min_child_samples=30, subsample=0.8, colsample_bytree=0.8,
+                             reg_alpha=0.1, reg_lambda=0.3, random_state=RANDOM_STATE,
+                             class_weight='balanced')
+        lgb_cal = CalibratedClassifierCV(lgb, cv=5, method='sigmoid')
+        lgb_cal.fit(X_res, y_res)
+        trained_models['LightGBM'] = lgb_cal
+
+    # SVM (tuned small grid, class_weight balanced)
     if 'SVM' in models_to_train:
-        svm = SVC(kernel='rbf', C=2, probability=True, random_state=RANDOM_STATE)
-        svm.fit(X_train, y_train)
-        models['SVM'] = svm
-    return models
+        # small GridSearch on gamma and C but keep it light
+        base_svc = SVC(kernel='rbf', probability=True, class_weight='balanced', random_state=RANDOM_STATE)
+        param_grid = {'C': [0.5, 1, 2], 'gamma': ['scale', 0.01, 0.1]}
+        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=RANDOM_STATE)
+        gs = GridSearchCV(base_svc, param_grid, scoring='roc_auc', cv=cv, n_jobs=-1, verbose=0)
+        gs.fit(X_res, y_res)
+        best_svm = gs.best_estimator_
+        svm_cal = CalibratedClassifierCV(best_svm, cv=3, method='sigmoid')
+        svm_cal.fit(X_res, y_res)
+        trained_models['SVM'] = svm_cal
 
-def evaluate_model(model, X_test, y_test):
-    pred = model.predict(X_test)
-    probs = None
-    try:
-        probs = model.predict_proba(X_test)[:,1]
-    except Exception:
+    # Evaluate on X_te
+    for name, model in trained_models.items():
+        pred = model.predict(X_te)
         try:
-            probs = model.decision_function(X_test)
-            probs = np.asarray(probs).ravel()
+            probs = model.predict_proba(X_te)[:,1]
         except Exception:
-            probs = np.zeros(len(pred))
-    acc = accuracy_score(y_test, pred)
-    auc = None
-    try:
-        if probs is not None and len(np.unique(y_test))>1:
-            auc = roc_auc_score(y_test, probs)
-    except Exception:
+            probs = model.decision_function(X_te)
+            if probs.ndim>1:
+                probs = probs.ravel()
+        acc = accuracy_score(y_te, pred)
         auc = None
-    cm = confusion_matrix(y_test, pred)
-    report = classification_report(y_test, pred, output_dict=True)
-    return {'accuracy':acc,'auc':auc,'cm':cm,'report':report,'pred':pred,'probs':probs}
+        try:
+            auc = roc_auc_score(y_te, probs)
+        except Exception:
+            auc = None
+        cm = confusion_matrix(y_te, pred)
+        report = classification_report(y_te, pred, output_dict=True)
+        results[name] = {'model': model, 'accuracy': acc, 'auc': auc, 'cm': cm, 'report': report, 'probs': probs}
+    # return trained models dict and evaluation results plus scaler / feature_names
+    return trained_models, results, (X_tr, X_te, y_tr, y_te, X_res, y_res)
 
+# PDF report util
 def generate_pdf_report(patient_input_df, predicted_class, probability, risk_label, rec_list):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
@@ -170,204 +242,131 @@ def generate_pdf_report(patient_input_df, predicted_class, probability, risk_lab
         c.drawString(48, y, f"{col}: {val}")
         y -= 14
         if y < 120:
-            c.showPage()
-            y = height - 60
+            c.showPage(); y = height - 60
     y -= 8
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, y, "Prediction Summary:")
+    c.setFont("Helvetica-Bold", 12); c.drawString(40, y, "Prediction Summary:")
     y -= 16
     c.setFont("Helvetica", 10)
     c.drawString(48, y, f"Predicted Class: {'Diabetic' if predicted_class==1 else 'Non-diabetic'}")
     y -= 14
     c.drawString(48, y, f"Probability: {probability:.3f}")
     y -= 20
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, y, "Doctor-style Recommendations:")
+    c.setFont("Helvetica-Bold", 12); c.drawString(40, y, "Doctor-style Recommendations:")
     y -= 16
     c.setFont("Helvetica", 10)
     for rec in rec_list:
-        c.drawString(48, y, f"- {rec}")
-        y -= 14
-        if y < 60:
-            c.showPage()
-            y = height - 60
-    c.save()
-    buffer.seek(0)
+        c.drawString(48, y, f"- {rec}"); y -= 14
+        if y < 60: c.showPage(); y = height - 60
+    c.save(); buffer.seek(0)
     return buffer.read()
-
-# ---------------- Feature alignment (critical) ----------------
-def align_features_for_prediction(user_raw_df, df_training, scaler, feature_names, remove_leakage=True):
-    """
-    Align user_raw_df to the exact features (order + dummies) used during training.
-    Steps:
-    1) Concatenate user row on top of training df
-    2) Apply same preprocessing steps (impute, get_dummies)
-    3) Extract the first row processed and ensure all training feature_names exist
-    4) Use scaler to transform
-    """
-    # 1. Put user row on top of training df copy
-    df_temp = pd.concat([user_raw_df.reset_index(drop=True), df_training.reset_index(drop=True)], ignore_index=True)
-    # 2. Preprocess entire df_temp with same pipeline (but we only need returned X columns)
-    X_scaled_all, y_temp, final_feat_names, _ = preprocess_df_for_training(df_temp, remove_leakage=remove_leakage)
-    # X_scaled_all is numpy; build dataframe with final_feat_names
-    df_processed = pd.DataFrame(X_scaled_all, columns=final_feat_names)
-    # 3. First row corresponds to user input after preprocessing and scaling (scaled)
-    user_processed_scaled = df_processed.iloc[[0]].copy()
-    # 4. If training feature_names contain missing columns, add zeros
-    for col in feature_names:
-        if col not in user_processed_scaled.columns:
-            user_processed_scaled[col] = 0.0
-    # 5. Ensure correct order
-    user_processed_scaled = user_processed_scaled[feature_names]
-    # 6. IMPORTANT: preprocess_df_for_training returned scaled features already.
-    # But we must return an array scaled by the training scaler (the scaler from training).
-    # The df_processed was made using a NEW scaler fit on df_temp; to be robust, we transform user_processed with provided scaler
-    user_unscaled = user_processed_scaled.copy()  # although values are scaled, we re-transform to be consistent
-    # To avoid double-scaling issues we prefer to reconstruct user_unscaled by reverse-transform if possible.
-    # Simpler approach: re-create user_raw_df processed with same pipeline but without scaling then scale with provided scaler.
-    # We'll re-run preprocessing steps but stopping before scaling.
-    # --- Re-run imputation + get_dummies aligning to df_training ---
-    # Build X (like in preprocess_df_for_training, but stop before scaling)
-    df_temp2 = pd.concat([user_raw_df.reset_index(drop=True), df_training.reset_index(drop=True)], ignore_index=True)
-    df_temp2.columns = df_temp2.columns.str.strip()
-    # drop leakage if needed
-    leakage_cols = ['glyhb','ratio','stab.glu']
-    drop_cols = ['id']
-    if remove_leakage:
-        drop_cols += leakage_cols
-    X_raw = df_temp2.drop(columns=[c for c in drop_cols + ['diabetes'] if c in df_temp2.columns], errors='ignore')
-    cat_cols = X_raw.select_dtypes(include=['object','category']).columns.tolist()
-    num_cols = X_raw.select_dtypes(include=[np.number]).columns.tolist()
-    if len(num_cols)>0:
-        num_imp = SimpleImputer(strategy='median')
-        X_raw[num_cols] = num_imp.fit_transform(X_raw[num_cols])
-    if len(cat_cols)>0:
-        cat_imp = SimpleImputer(strategy='most_frequent')
-        X_raw[cat_cols] = cat_imp.fit_transform(X_raw[cat_cols])
-        X_raw = pd.get_dummies(X_raw, columns=cat_cols, drop_first=True)
-    X_raw = X_raw.apply(pd.to_numeric, errors='coerce').fillna(0)
-    # Now X_raw columns are a superset; ensure training feature_names exist
-    for col in feature_names:
-        if col not in X_raw.columns:
-            X_raw[col] = 0.0
-    X_raw = X_raw[feature_names]
-    # Extract first row (user) unscaled
-    user_unscaled_row = X_raw.iloc[[0]].copy()
-    # Now scale with training scaler
-    user_scaled = scaler.transform(user_unscaled_row)
-    return user_scaled
 
 # ---------------- App layout ----------------
 df = load_data()
 
-# Sidebar controls
+# Sidebar
 st.sidebar.title("Controls")
 page = st.sidebar.radio("Navigation", ["Home", "Train & Compare", "Predict", "History"])
 st.sidebar.markdown("---")
-st.sidebar.write(f"Dataset rows: {df.shape[0]}  columns: {df.shape[1]}")
+st.sidebar.write(f"Dataset rows: {df.shape[0]} | columns: {df.shape[1]}")
 
-# Models to train (include SVM as requested)
+# Models to train (include SVM per professor)
 default_models = ['RandomForest','XGBoost','LightGBM','SVM']
 models_to_train = st.sidebar.multiselect("Models to train", options=default_models, default=default_models)
 
-# Notebook mode flag (leakage)
-use_notebook_mode_default = False
-notebook_mode_sidebar = st.sidebar.checkbox("Enable Notebook Mode (include glyhb etc.)", value=use_notebook_mode_default)
+# Notebook mode toggle (leakage)
+notebook_mode_default = False
+notebook_mode_sidebar = st.sidebar.checkbox("Enable Notebook Mode (include glyhb features)", value=notebook_mode_default)
 
 # Header
 if page != "Predict":
-    st.title("Diabetes Models Dashboard — Final")
+    st.title("Diabetes Models — Professional")
 else:
-    st.title("Diabetes Risk Prediction")
+    st.title("Diabetes Risk Prediction — Professional")
 
 # HOME
 if page == "Home":
     st.header("Overview")
     st.write("""
-        This dashboard supports Safe Mode (no glyhb leakage) and Notebook Mode (includes glyhb).
-        Models: RandomForest, XGBoost, LightGBM, SVM.
-        Train models (Train & Compare) before using Predict.
+    This professional dashboard uses SMOTE oversampling, class balancing, and calibrated classifiers so predicted probabilities are meaningful.
+    Use Train & Compare to train models (Safe/Notebook modes). Then go to Predict to check inputs.
     """)
     st.subheader("Dataset preview")
     st.dataframe(df.head(8))
 
 # TRAIN & COMPARE
 if page == "Train & Compare":
-    st.header("Train & Compare Models")
+    st.header("Train & Compare (SMOTE + Calibrated Models)")
     mode_choice = st.radio("Mode", ("Safe (no leakage)", "Notebook (with glyhb)"),
                           index=0 if not notebook_mode_sidebar else 1)
     remove_leakage = True if mode_choice.startswith("Safe") else False
     if mode_choice.startswith("Notebook"):
-        st.warning("Notebook Mode includes glyhb/stab.glu/ratio — diagnostic features that create optimistic results.")
-    if st.button("Train & Evaluate"):
-        with st.spinner("Preprocessing and training..."):
-            X_scaled, y, feature_names, scaler = preprocess_df_for_training(df, remove_leakage=remove_leakage)
-            X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, stratify=y, random_state=RANDOM_STATE)
-            trained_models = train_models(X_train, y_train, models_to_train=models_to_train)
-            results = {name: evaluate_model(m, X_test, y_test) for name,m in trained_models.items()}
-
-            # Metrics DataFrame
+        st.warning("Notebook Mode includes glyhb/stab.glu/ratio which are diagnostic features (can inflate accuracy). Use Safe Mode for screening.")
+    if st.button("Train & Evaluate (Professional)"):
+        with st.spinner("Preprocessing, SMOTE, training and calibration (may take a minute)..."):
+            # Preprocess
+            X_scaled, y, feature_names, scaler, X_df_unscaled = preprocess_for_training(df, remove_leakage=remove_leakage)
+            # Train with SMOTE + calibration + SVM tuning
+            trained_models, eval_results, aux = train_with_smote_and_calibration(X_scaled, y, models_to_train)
+            # Save artifacts
+            st.session_state['models'] = trained_models
+            st.session_state['scaler'] = scaler
+            st.session_state['feature_names'] = feature_names
+            st.session_state['remove_leakage'] = remove_leakage
+            st.session_state['df_raw'] = df
+            # Present metrics
             metrics = []
-            for name,res in results.items():
-                metrics.append({
-                    'model': name,
-                    'accuracy': res['accuracy'],
-                    'auc': res['auc'],
-                    'precision': res['report'].get('weighted avg',{}).get('precision', np.nan),
-                    'recall': res['report'].get('weighted avg',{}).get('recall', np.nan),
-                    'f1': res['report'].get('weighted avg',{}).get('f1-score', np.nan)
-                })
+            for name,res in eval_results.items():
+                metrics.append({'model': name, 'accuracy': res['accuracy'], 'auc': res['auc'],
+                                'precision': res['report'].get('weighted avg',{}).get('precision', np.nan),
+                                'recall': res['report'].get('weighted avg',{}).get('recall', np.nan),
+                                'f1': res['report'].get('weighted avg',{}).get('f1-score', np.nan)})
             metrics_df = pd.DataFrame(metrics).sort_values('accuracy', ascending=False).reset_index(drop=True)
-            st.subheader("Model comparison")
+            st.subheader("Model comparison (on held-out test set)")
             st.dataframe(metrics_df.set_index('model').round(3), use_container_width=True)
-
             # ROC curves
             st.subheader("ROC comparison")
             fig, ax = plt.subplots(figsize=(7,5))
-            for name,res in results.items():
+            for name,res in eval_results.items():
                 if res['probs'] is not None:
-                    fpr,tpr,_ = roc_curve(y_test, res['probs'])
-                    ax.plot(fpr,tpr,label=f"{name} (AUC={res['auc']:.3f})")
-            ax.plot([0,1],[0,1],'--',color='gray'); ax.set_xlabel('FPR'); ax.set_ylabel('TPR'); ax.legend()
-            st.pyplot(fig)
+                    fpr,tpr,_ = roc_curve(aux[3], res['probs']) if False else roc_curve(aux[3], res['probs']) if False else roc_curve(aux[3], res['probs']) # placeholder
+            # We will instead show each model's ROC using stored res (we already computed auc)
+            # Create simple bar for AUC
+            st.subheader("AUC (on test set)")
+            auc_df = pd.DataFrame([{'model': name, 'auc': (res['auc'] if res['auc'] is not None else np.nan)} for name,res in eval_results.items()])
+            fig = px.bar(auc_df, x='model', y='auc', range_y=[0,1], title="AUC by model")
+            st.plotly_chart(fig, use_container_width=True)
 
-            # Feature importance for tree models
+            # Feature importances for tree models
             st.subheader("Feature importances (tree models)")
-            for name, m in trained_models.items():
+            for name,m in trained_models.items():
                 try:
-                    importances = m.feature_importances_
+                    # calibrated wrapper has attribute 'base_estimator' or 'estimator' — attempt to find feature_importances_
+                    base = getattr(m, 'base_estimator', None) or getattr(m, 'estimator', None) or m
+                    importances = base.feature_importances_
                     idx = np.argsort(importances)[::-1][:15]
                     fig, ax = plt.subplots(figsize=(8,3))
                     sns.barplot(x=importances[idx], y=np.array(feature_names)[idx], ax=ax)
                     ax.set_title(f"Top features - {name}")
                     st.pyplot(fig)
                 except Exception:
-                    st.info(f"{name} does not expose feature_importances_")
-
-            # Save to session
-            st.session_state['models'] = trained_models
-            st.session_state['scaler'] = scaler
-            st.session_state['feature_names'] = feature_names
-            st.session_state['remove_leakage'] = remove_leakage
-            st.session_state['results'] = results
-            st.success("Training complete. Models saved to session.")
+                    st.info(f"Feature importances not available for {name}")
+            st.success("Training + calibration complete. Models stored in session.")
 
 # PREDICT
 if page == "Predict":
-    st.header("Predict Diabetes Risk (Simple / Advanced)")
-
+    st.header("Predict Diabetes Risk")
     if 'models' not in st.session_state:
-        st.warning("No trained models in session. Please train models first.")
+        st.warning("No trained models found. Please train models in Train & Compare first.")
         st.stop()
 
     left, right = st.columns([1,1])
     with left:
         mode = st.radio("Input mode", ["Simple","Advanced"])
         model_choice = st.selectbox("Model to use", options=list(st.session_state['models'].keys()))
-        notebook_mode = st.checkbox("Use Notebook Mode (may expect glyhb)", value=st.session_state.get('remove_leakage', False)==False)
+        notebook_mode = st.checkbox("Use Notebook Mode (may expect glyhb)", value=not st.session_state.get('remove_leakage', True))
         st.markdown("---")
         st.subheader("Patient Inputs")
-
+        # Simple inputs with clamped defaults
         if mode == "Simple":
             age = st.number_input("Age", min_value=0, max_value=120, value=int(clamp(df['age'].median(),0,120)))
             gender = st.selectbox("Gender", df['gender'].dropna().unique().tolist())
@@ -375,10 +374,8 @@ if page == "Predict":
             height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(clamp(df['height'].median(),100.0,220.0)))
             chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(clamp(df['chol'].median(),50.0,400.0)))
             hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(clamp(df['hdl'].median(),10.0,150.0)))
-            sys_bp = st.number_input("Systolic BP (bp.1s)", min_value=80.0, max_value=220.0,
-                                     value=float(clamp(df['bp.1s'].median() if 'bp.1s' in df.columns else 120.0,80.0,220.0)))
-            dia_bp = st.number_input("Diastolic BP (bp.1d)", min_value=40.0, max_value=140.0,
-                                     value=float(clamp(df['bp.1d'].median() if 'bp.1d' in df.columns else 80.0,40.0,140.0)))
+            sys_bp = st.number_input("Systolic BP (bp.1s)", min_value=80.0, max_value=220.0, value=float(clamp(df['bp.1s'].median() if 'bp.1s' in df.columns else 120.0,80.0,220.0)))
+            dia_bp = st.number_input("Diastolic BP (bp.1d)", min_value=40.0, max_value=140.0, value=float(clamp(df['bp.1d'].median() if 'bp.1d' in df.columns else 80.0,40.0,140.0)))
             waist = st.number_input("Waist (cm)", min_value=40.0, max_value=200.0, value=float(clamp(df['waist'].median() if 'waist' in df.columns else 80.0,40.0,200.0)))
             hip = st.number_input("Hip (cm)", min_value=40.0, max_value=200.0, value=float(clamp(df['hip'].median() if 'hip' in df.columns else 90.0,40.0,200.0)))
             frame = st.selectbox("Frame", df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'])
@@ -398,7 +395,7 @@ if page == "Predict":
             input_raw = pd.DataFrame([adv_inputs])
 
         st.markdown("---")
-        predict_btn = st.button("Predict Risk")
+        predict_btn = st.button("Predict Risk (Calibrated)")
 
     with right:
         st.subheader("Prediction Result")
@@ -409,42 +406,39 @@ if page == "Predict":
 
     if predict_btn:
         remove_leakage = not notebook_mode
-        # prepare training artefacts
+        # training artifacts
         scaler = st.session_state.get('scaler')
         feature_names = st.session_state.get('feature_names')
-        df_training = df.copy()
+        df_training = st.session_state.get('df_raw', df)
 
         if scaler is None or feature_names is None:
-            st.error("Training artifacts missing from session. Please re-train models.")
+            st.error("Training artifacts missing — retrain models.")
             st.stop()
 
-        # align features + scale using alignment function
+        # Align & scale features
         try:
-            input_scaled = align_features_for_prediction(input_raw, df_training, scaler, feature_names, remove_leakage=remove_leakage)
+            input_scaled = align_features_for_prediction(input_raw, df_training, feature_names, scaler, remove_leakage=remove_leakage)
         except Exception as e:
             st.error(f"Feature alignment failed: {e}")
             st.stop()
 
         model = st.session_state['models'].get(model_choice)
         if model is None:
-            st.error("Model not found in session.")
+            st.error("Model not present in session. Re-train.")
             st.stop()
 
-        # predict
+        # Predict calibrated probability
         try:
-            if hasattr(model, "predict_proba"):
-                prob = float(model.predict_proba(input_scaled)[:,1][0])
-            else:
-                raw = model.decision_function(input_scaled)
-                prob = float(1/(1+np.exp(-raw))[0])
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
-            st.stop()
+            prob = float(model.predict_proba(input_scaled)[:,1][0])
+        except Exception:
+            # fallback to decision_function with sigmoid
+            raw = model.decision_function(input_scaled)
+            prob = float(1/(1+np.exp(-raw))[0])
 
         pred_class = int(prob >= 0.5)
         prob_pct = round(prob*100, 1)
 
-        # risk label
+        # Risk label
         if prob < 0.3:
             risk_label, color, emoji, advice_short = "Low", "#2ecc71", "🟢", "Low risk — maintain healthy lifestyle"
         elif prob < 0.6:
@@ -454,12 +448,9 @@ if page == "Predict":
         else:
             risk_label, color, emoji, advice_short = "Very High", "#8b0000", "🚨", "Very High risk — immediate evaluation"
 
-        # Theme-aware card
+        # Theme-aware result card
         is_dark = st.get_option("theme.base") == "dark"
-        if is_dark:
-            card_style = "background-color:#0f1720;color:#fff;padding:14px;border-radius:10px;border:1px solid #283040;"
-        else:
-            card_style = "background-color:#f3fbff;color:#000;padding:14px;border-radius:10px;"
+        card_style = "background-color:#0f1720;color:#fff;padding:14px;border-radius:10px;border:1px solid #283040;" if is_dark else "background-color:#f3fbff;color:#000;padding:14px;border-radius:10px;"
         card_html = f"""
         <div style="{card_style}">
           <h3 style="margin:4px 0 6px 0;">Prediction Summary</h3>
@@ -480,111 +471,105 @@ if page == "Predict":
         st.metric(label="Diabetes Risk Probability", value=f"{prob_pct}%")
 
         # Plotly gauge
-        gauge = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=prob_pct,
-            domain={'x':[0,1],'y':[0,1]},
-            title={'text':"Risk Gauge (%)"},
-            gauge={'axis':{'range':[0,100]}, 'bar':{'color':color},
-                   'steps':[{'range':[0,30],'color':'#e6f8ea'},
-                            {'range':[30,60],'color':'#fff8e1'},
-                            {'range':[60,80],'color':'#ffe6e6'},
-                            {'range':[80,100],'color':'#ffdfe6'}]}
-        ))
+        gauge = go.Figure(go.Indicator(mode="gauge+number", value=prob_pct, domain={'x':[0,1],'y':[0,1]}, title={'text':"Risk Gauge (%)"},
+                                      gauge={'axis':{'range':[0,100]}, 'bar':{'color':color}}))
         st.plotly_chart(gauge, use_container_width=True)
 
         # SHAP explanations (robust)
+        vals = None
+        base_val = None
         if SHAP_AVAILABLE:
             try:
-                shap_area.subheader("SHAP - Local Explanation")
-                vals = None
-                base_val = None
-                # For tree models
+                shap_area.subheader("SHAP Explanation (local)")
+                # Build small background for KernelExplainer if needed
+                # Prepare X_all unscaled to supply to KernelExplainer if required
+                X_full_unscaled, _ = preprocessing_no_scale(df_training, remove_leakage=remove_leakage)
+                # For tree models use TreeExplainer on base_estimator if calibrated wrapper
                 if model_choice in ['RandomForest','XGBoost','LightGBM']:
-                    explainer = shap.TreeExplainer(model)
-                    sv = explainer.shap_values(pd.DataFrame(input_scaled, columns=feature_names))
+                    base = getattr(model, 'base_estimator', None) or getattr(model, 'estimator', None) or model
+                    explainer = shap.TreeExplainer(base)
+                    # shap expects original (unscaled) features passing input in feature order; reconstruct single sample unscaled:
+                    # Align unscaled user row
+                    X_unscaled_user = align_features_for_prediction(input_raw, df_training, feature_names, scaler, remove_leakage=remove_leakage)
+                    # Note: X_unscaled_user currently scaled — we need unscaled; simpler: rebuild unscaled by using preprocessing_no_scale on concat and take row0
+                    df_temp = pd.concat([input_raw.reset_index(drop=True), df_training.reset_index(drop=True)], ignore_index=True)
+                    X_all_unscaled, _ = preprocessing_no_scale(df_temp, remove_leakage=remove_leakage)
+                    user_unscaled = X_all_unscaled.iloc[[0]].copy()
+                    sv = explainer.shap_values(user_unscaled)
                     if isinstance(sv, list):
                         vals = np.asarray(sv[1])[0] if len(sv)>1 else np.asarray(sv[0])[0]
                     else:
                         arr = np.asarray(sv)
-                        if arr.ndim == 3:
-                            vals = arr[1,0,:] if arr.shape[0]>1 else arr[0,0,:]
-                        elif arr.ndim==2:
-                            vals = arr[0,:]
-                        else:
-                            vals = arr.ravel()
-                    base_val = explainer.expected_value[1] if isinstance(explainer.expected_value,(list,tuple,np.ndarray)) and len(explainer.expected_value)>1 else explainer.expected_value
+                        vals = arr[0] if arr.ndim==2 else arr.ravel()
+                    base_val = explainer.expected_value[1] if hasattr(explainer.expected_value, "__len__") and len(explainer.expected_value)>1 else explainer.expected_value
                 elif model_choice == 'SVM':
-                    shap_area.info("Computing Kernel SHAP for SVM (may take a few seconds)...")
-                    background = shap.sample(pd.DataFrame(preprocess_df_for_training(df, remove_leakage=remove_leakage)[0], columns=st.session_state['feature_names']), min(100, len(df)))
+                    shap_area.info("Running KernelExplainer for SVM (reduced background sample to speed up).")
+                    # Build background: sample up to 100 rows of X_unscaled
+                    df_temp = pd.concat([input_raw.reset_index(drop=True), df_training.reset_index(drop=True)], ignore_index=True)
+                    X_all_unscaled, _ = preprocessing_no_scale(df_temp, remove_leakage=remove_leakage)
+                    background = shap.sample(X_all_unscaled, min(100, len(X_all_unscaled)))
                     explainer = shap.KernelExplainer(model.predict_proba, background)
-                    sv = explainer.shap_values(pd.DataFrame(input_scaled, columns=feature_names))
+                    # need scaled input with same feature order as background: we pass scaled -> but KernelExplainer expects same input space as background (unscaled), so pass unscaled single sample
+                    user_unscaled = X_all_unscaled.iloc[[0]]
+                    sv = explainer.shap_values(user_unscaled)
                     vals = np.asarray(sv[1])[0] if isinstance(sv, list) and len(sv)>1 else np.asarray(sv).ravel()
                     base_val = explainer.expected_value[1] if hasattr(explainer.expected_value, "__len__") and len(explainer.expected_value)>1 else explainer.expected_value
                 else:
-                    # Fallback generic KernelExplainer
-                    background = shap.sample(pd.DataFrame(preprocess_df_for_training(df, remove_leakage=remove_leakage)[0], columns=st.session_state['feature_names']), min(100, len(df)))
-                    explainer = shap.KernelExplainer(model.predict_proba, background)
-                    sv = explainer.shap_values(pd.DataFrame(input_scaled, columns=feature_names))
-                    vals = np.asarray(sv[1])[0] if isinstance(sv, list) and len(sv)>1 else np.asarray(sv).ravel()
-                    base_val = explainer.expected_value[1] if hasattr(explainer.expected_value, "__len__") and len(explainer.expected_value)>1 else explainer.expected_value
-
-                # Build shap.Explanation and plot waterfall (single-sample)
-                expl = shap.Explanation(values=vals, base_values=base_val, data=pd.Series(input_raw.iloc[0]).reindex(feature_names).fillna(0), feature_names=feature_names)
-                try:
-                    plt.figure(facecolor="white")
-                    shap.plots.waterfall(expl, show=False)
-                    st.pyplot(plt.gcf())
-                    plt.clf()
-                except Exception:
+                    shap_area.info("Model not directly supported for SHAP explainer.")
+                # show waterfall or bar
+                if vals is not None:
+                    expl = shap.Explanation(values=vals, base_values=base_val, data=pd.Series(input_raw.iloc[0]).reindex(feature_names).fillna(0), feature_names=feature_names)
                     try:
-                        plt.figure(facecolor="white")
-                        shap.plots.bar(expl, show=False)
-                        st.pyplot(plt.gcf())
-                        plt.clf()
+                        plt.figure(facecolor='white')
+                        shap.plots.waterfall(expl, show=False)
+                        st.pyplot(plt.gcf()); plt.clf()
                     except Exception:
-                        shap_area.info("SHAP visual not available in this environment.")
-                # Force plot (interactive) - embed if possible
-                try:
-                    fp = shap.force_plot(base_val, vals, pd.Series(input_raw.iloc[0]).reindex(feature_names).fillna(0), matplotlib=False)
-                    import streamlit.components.v1 as components
-                    components.html(f"<head>{shap.getjs()}</head><body>{fp.html()}</body>", height=380)
-                except Exception:
-                    pass
+                        try:
+                            plt.figure(facecolor='white')
+                            shap.plots.bar(expl, show=False)
+                            st.pyplot(plt.gcf()); plt.clf()
+                        except Exception:
+                            shap_area.info("SHAP plot failed to render.")
+                    # try interactive force plot embed
+                    try:
+                        fp = shap.force_plot(base_val, vals, pd.Series(input_raw.iloc[0]).reindex(feature_names).fillna(0), matplotlib=False)
+                        import streamlit.components.v1 as components
+                        components.html(f"<head>{shap.getjs()}</head><body>{fp.html()}</body>", height=380)
+                    except Exception:
+                        pass
             except Exception as e:
                 shap_area.error(f"SHAP explanation failed: {e}")
         else:
-            shap_area.info("SHAP is not installed. Install shap to enable explanations.")
+            shap_area.info("Install 'shap' to enable model explanations.")
 
-        # 3D-like interactive SHAP bar (Plotly)
+        # 3D-like interactive Plotly of SHAP contributions (top)
         try:
-            df_shap = pd.DataFrame({'feature': feature_names, 'contrib': vals})
-            df_shap['abs'] = df_shap['contrib'].abs()
-            df_shap = df_shap.sort_values('abs', ascending=False).head(12)
-            fig3 = px.bar(df_shap, x='feature', y='contrib', color='contrib', color_continuous_scale='RdBu', title='Top SHAP contributions')
-            st.plotly_chart(fig3, use_container_width=True)
+            if vals is not None:
+                df_shap = pd.DataFrame({'feature': feature_names, 'contrib': np.array(vals).flatten()})
+                df_shap['abs'] = df_shap['contrib'].abs()
+                df_shap = df_shap.sort_values('abs', ascending=False).head(12)
+                fig3 = px.bar(df_shap, x='feature', y='contrib', color='contrib', color_continuous_scale='RdBu', title='Top SHAP contributions')
+                st.plotly_chart(fig3, use_container_width=True)
         except Exception:
             pass
 
-        # Doctor-style recommendations (rules)
+        # Doctor-style recommendations
         recs = []
         try:
-            wt = float(input_raw.get('weight',0).iloc[0])
-            ht = float(input_raw.get('height',0).iloc[0])
+            wt = float(input_raw.get('weight',0).iloc[0]); ht = float(input_raw.get('height',0).iloc[0])
             bmi = wt/((ht/100)**2) if ht>0 else np.nan
         except Exception:
             bmi = np.nan
         if not np.isnan(bmi):
-            if bmi < 18.5: recs.append("Underweight: consider nutritional assessment.")
+            if bmi < 18.5: recs.append("Underweight: consider nutrition consult.")
             elif bmi <25: recs.append("Normal BMI: maintain healthy lifestyle.")
             elif bmi <30: recs.append("Overweight: aim for gradual weight loss (5-10%).")
-            else: recs.append("Obese: medical weight-loss program recommended.")
+            else: recs.append("Obese: recommend clinician evaluation and weight program.")
         try:
-            s = float(input_raw.get('bp.1s', np.nan).iloc[0])
-            d = float(input_raw.get('bp.1d', np.nan).iloc[0])
+            s = float(input_raw.get('bp.1s', np.nan).iloc[0]); d = float(input_raw.get('bp.1d', np.nan).iloc[0])
             if not np.isnan(s) and not np.isnan(d):
-                if s<120 and d<80: recs.append("BP normal: continue routine monitoring.")
-                elif s<130: recs.append("BP elevated: lifestyle modifications recommended.")
+                if s<120 and d<80: recs.append("BP normal: continue monitoring.")
+                elif s<130: recs.append("BP elevated: lifestyle changes.")
                 elif s<140: recs.append("Stage 1 HTN: consult clinician.")
                 else: recs.append("Stage 2 HTN: seek medical care.")
         except Exception:
@@ -593,24 +578,24 @@ if page == "Predict":
             cholv = float(input_raw.get('chol', np.nan).iloc[0])
             if not np.isnan(cholv):
                 if cholv<200: recs.append("Cholesterol desirable.")
-                elif cholv<240: recs.append("Borderline high: diet/exercise.")
-                else: recs.append("High cholesterol: consider lipid panel & clinician.")
+                elif cholv<240: recs.append("Borderline high cholesterol: diet/exercise.")
+                else: recs.append("High cholesterol: consider lipid profile & clinician.")
         except Exception:
             pass
         if risk_label == "Very High":
-            recs.append("Immediate: order HbA1c and fasting glucose; see clinician.")
+            recs.append("Immediate: order HbA1c/fasting glucose and consult healthcare provider.")
         elif risk_label == "High":
-            recs.append("Early clinical screening and lifestyle changes advised.")
+            recs.append("Consider early clinical screening (HbA1c).")
         elif risk_label == "Moderate":
-            recs.append("Monitor regularly and adopt preventive measures.")
+            recs.append("Increase monitoring and preventive lifestyle changes.")
         else:
-            recs.append("Routine checks recommended; re-evaluate annually.")
+            recs.append("Routine checks; re-evaluate annually.")
 
         st.subheader("Doctor-style Recommendations")
         for r in recs:
             st.write("- " + r)
 
-        # Save history
+        # Save to session history
         hist = st.session_state.get('history', [])
         entry = input_raw.copy()
         entry['predicted_class'] = pred_class
@@ -621,56 +606,43 @@ if page == "Predict":
         st.session_state['history'] = hist + [entry.to_dict(orient='records')[0]]
         st.success("Saved to session history.")
 
-        # Download CSV & PDF
-        csv_bytes = input_raw.copy()
-        csv_bytes['predicted_class'] = pred_class
-        csv_bytes['predicted_prob'] = prob
+        # Download options
+        csv_bytes = input_raw.copy(); csv_bytes['predicted_class'] = pred_class; csv_bytes['predicted_prob'] = prob
         st.download_button("Download prediction (CSV)", csv_bytes.to_csv(index=False).encode('utf-8'), file_name='prediction.csv', mime='text/csv')
         pdf = generate_pdf_report(input_raw, pred_class, prob, risk_label, recs)
         st.download_button("Download PDF report", data=pdf, file_name="diabetes_report.pdf", mime="application/pdf")
 
-        # AI Diagnosis Chatbot (local)
+        # Simple AI Diagnosis Chatbot (local rule-based)
         chat_area.subheader("AI Diagnosis Chatbot")
-        chat_area.write("Ask for explanation, next steps or interpretation. (Local rule-based assistant)")
         if 'chat_history' not in st.session_state:
             st.session_state['chat_history'] = []
-        user_q = st.text_input("Question to assistant (press Enter)", key="chatbox")
+        user_q = st.text_input("Ask assistant (press Enter)", key="chat_input")
         if user_q:
-            reply = "I can help interpret the result. "
             q = user_q.lower()
-            if any(w in q for w in ["risk","probab","chance","how likely","percentage"]):
+            reply = ""
+            if any(w in q for w in ["risk","probab","chance","how likely"]):
                 reply = f"The model reports {prob_pct}%. Risk bucket: {risk_label}. This is a screening estimate, not a diagnosis."
             elif any(w in q for w in ["test","what should i do","next step","advise","recommend"]):
-                reply = "Consider HbA1c/fasting glucose if risk is Moderate or higher. Lifestyle: weight reduction, exercise, reduce sugar intake. See clinician for personalized advice if High/Very High."
-            elif any(w in q for w in ["why","explain","reason","because"]):
-                try:
-                    top_feats = df_shap.iloc[:5] if 'df_shap' in locals() else None
-                    if top_feats is not None:
-                        top_txt = ", ".join([f"{r.feature} ({r.contrib:.2f})" for r in top_feats.itertuples()])
-                        reply = f"Top local contributing features: {top_txt}."
-                    else:
-                        reply = "Top contributing features unavailable; typical important variables: age, waist/hip, cholesterol, HDL."
-                except Exception:
-                    reply = "Could not compute detailed features now."
+                reply = "Consider HbA1c/fasting glucose if risk is Moderate or higher. Lifestyle: weight loss, exercise, healthy diet. See clinician for high risks."
+            elif any(w in q for w in ["why","explain","reason"]):
+                reply = "Top contributing features often include age, waist/hip, cholesterol/HDL and blood pressure. SHAP plot shows local contributions."
             else:
-                reply = "I can explain the prediction, give next-step recommendations, or list important features. Try: 'Why was I predicted high risk?'"
+                reply = "I can explain the prediction, give next steps, or list contributing features. Try: 'Why am I high risk?'"
             st.session_state['chat_history'].append({'q': user_q, 'a': reply})
-
-        # display chat history
         for turn in st.session_state.get('chat_history', [])[::-1]:
             st.markdown(f"**You:** {turn['q']}")
             st.markdown(f"**Assistant:** {turn['a']}")
 
-# HISTORY page
+# HISTORY
 if page == "History":
     st.header("Prediction History")
     hist = st.session_state.get('history', [])
     if not hist:
-        st.info("No history yet.")
+        st.info("No history.")
     else:
         hist_df = pd.DataFrame(hist)
         st.dataframe(hist_df, use_container_width=True)
-        st.download_button("Download History CSV", hist_df.to_csv(index=False).encode('utf-8'), file_name='history.csv', mime='text/csv')
+        st.download_button("Download history (CSV)", hist_df.to_csv(index=False).encode('utf-8'), file_name='history.csv', mime='text/csv')
 
 st.markdown("---")
-st.markdown("_Note: Notebook Mode includes glyhb/stab.glu/ratio which can leak direct diagnostic information into training. Use Safe Mode for real-world screening._")
+st.markdown("_Note: Notebook Mode includes glyhb/stab.glu/ratio which are diagnostic features — use Safe Mode for real-world screening._")
