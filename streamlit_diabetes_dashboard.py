@@ -235,23 +235,42 @@ st.sidebar.markdown("Note: Use 'Train Models' to (re)train models. Predict page 
 # ---------------- TRAIN MODELS page ----------------
 if page == 'Train Models':
     st.title("Train & Compare Models — DiaGuard Pro (Professional)")
-    mode_choice = st.radio("Mode", ("Safe - no glyhb leakage", "Notebook - include glyhb (diagnostic)"), index=0)
-    remove_leakage = True if mode_choice.startswith("Safe") else False
-    if mode_choice.startswith("Notebook"):
-        st.warning("Notebook Mode includes glyhb/stab.glu/ratio which are diagnostic features and can inflate accuracy.")
-    models_to_train = st.multiselect("Models to train", options=['RandomForest','XGBoost','LightGBM','SVM'], default=['RandomForest','XGBoost','LightGBM','SVM'])
 
-    if st.button("Train (SMOTE + Calibrated Models)"):
-        with st.spinner("Training models with SMOTE, calibration and small SVM tuning (this may take a minute)..."):
-            trained_models, eval_results, artifacts = train_with_smote_and_calibration(df, remove_leakage=remove_leakage, models_to_train=models_to_train)
-            # Save to session
+    # ALWAYS SHOW THESE (never inside an IF)
+    mode_choice = st.radio(
+        "Mode",
+        ("Safe - no glyhb leakage", "Notebook - include glyhb (diagnostic)"),
+        index=0
+    )
+    remove_leakage = mode_choice.startswith("Safe")
+
+    # ALWAYS VISIBLE
+    models_to_train = st.multiselect(
+        "Models to train",
+        ['RandomForest','XGBoost','LightGBM','SVM'],
+        default=['RandomForest','XGBoost','LightGBM','SVM']
+    )
+
+    # ONLY BUTTON TRIGGER BELOW
+    train = st.button("Train (SMOTE + Calibrated Models)")
+
+    if train:
+        with st.spinner("Training models…"):
+            trained_models, eval_results, artifacts = train_with_smote_and_calibration(
+                df,
+                remove_leakage=remove_leakage,
+                models_to_train=models_to_train
+            )
             st.session_state['models'] = trained_models
             st.session_state['results'] = eval_results
             st.session_state['scaler'] = artifacts['scaler']
             st.session_state['feature_names'] = artifacts['feature_names']
             st.session_state['remove_leakage'] = remove_leakage
             st.session_state['df_raw'] = df
-        st.success("Training complete and models saved in session.")
+
+        st.success("Training complete!")
+        st.write(eval_results)
+
 
         # Display results summary
         rows = []
