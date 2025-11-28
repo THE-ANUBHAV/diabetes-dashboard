@@ -207,7 +207,6 @@ def plot_feature_importance(model, feature_names, model_name, max_feats=15, use_
             return
         try:
             # Build a tiny background of zeros — the KernelExplainer expects same input distribution.
-            # Using zeros will produce a ranking but ideally background should be real rows.
             background = np.zeros((1, len(feature_names)))
             explainer = shap.KernelExplainer(model.predict_proba, background)
             sample = np.zeros((1, len(feature_names)))
@@ -423,8 +422,22 @@ elif page == "Predict":
         with c2:
             chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'],200)), disabled=disable_controls)
             hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'],40)), disabled=disable_controls)
-            bp_sys = st.number_input("Systolic BP (bp.1s)", min_value=80.0, max_value=220.0, value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120])), disabled=disable_controls)
-            bp_dia = st.number_input("Diastolic BP (bp.1d)", min_value=40.0, max_value=140.0, value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80])), disabled=disable_controls)
+            # ✅ FIXED SYSTOLIC BP (parentheses and arguments correct)
+            bp_sys = st.number_input(
+                "Systolic BP (bp.1s)",
+                min_value=80.0,
+                max_value=220.0,
+                value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]))),
+                disabled=disable_controls
+            )
+            # ✅ FIXED DIASTOLIC BP (parentheses and arguments correct)
+            bp_dia = st.number_input(
+                "Diastolic BP (bp.1d)",
+                min_value=40.0,
+                max_value=140.0,
+                value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
+                disabled=disable_controls
+            )
         waist = st.number_input("Waist (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80])), disabled=disable_controls)
         hip = st.number_input("Hip (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90])), disabled=disable_controls)
         location = st.selectbox("Location", df['location'].dropna().unique().tolist() if 'location' in df.columns else ['Unknown'], disabled=disable_controls)
@@ -550,7 +563,6 @@ elif page == "Predict":
             # Create a small Shap contributions array if available
             # Recompute shap values for user_unscaled if not already computed
             if selected_model in ['RandomForest','XGBoost','LightGBM']:
-                # Use previously computed 'sv' if exists; else compute quickly using TreeExplainer
                 base_local = getattr(model, 'base_estimator', None) or getattr(model, 'estimator', None) or model
                 expl = shap.TreeExplainer(base_local)
                 sv2 = expl.shap_values(input_unscaled)
@@ -646,17 +658,8 @@ elif page == "Model Comparison":
     st.subheader("Performance Metrics")
     st.dataframe(metrics_df)
 
-    # ROC Comparison
-    st.subheader("ROC Curves")
-    fig, ax = plt.subplots(figsize=(8,6))
-    for name, r in results.items():
-        try:
-            fpr, tpr, _ = roc_curve(st.session_state.get('df_raw').loc[st.session_state.get('df_raw').index, 'diabetes'], r['probs']) if False else roc_curve(st.session_state.get('df_raw').loc[st.session_state.get('df_raw').index[:len(r['probs'])], 'diabetes'] if False else None, r['probs'])
-        except Exception:
-            # simpler: compute fpr/tpr from stored values using sklearn's roc_curve on test subset not stored — instead show AUC bars
-            fpr, tpr = None, None
-        # prefer plotting AUC bars below
-    st.write("AUC values:")
+    # AUC bar chart
+    st.subheader("AUC by model")
     auc_df = pd.DataFrame([{'model': name, 'auc': r['auc']} for name, r in results.items()])
     fig_auc = px.bar(auc_df, x='model', y='auc', range_y=[0,1], title='AUC by model')
     st.plotly_chart(fig_auc, use_container_width=True)
@@ -682,7 +685,6 @@ elif page == "Model Comparison":
     # Radar chart
     st.subheader("Radar Chart (normalized metrics)")
     radar_df = metrics_df.fillna(0)
-    # Normalize to 0-1 for each metric column
     norm = (radar_df - radar_df.min()) / (radar_df.max() - radar_df.min()).replace(0,1)
     labels = list(norm.columns)
     angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
