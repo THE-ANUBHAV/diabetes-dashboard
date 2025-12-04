@@ -438,10 +438,13 @@ elif page == "Predict":
                 value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
                 disabled=disable_controls
             )
-        waist = st.number_input("Waist (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80])), disabled=disable_controls)
-        hip = st.number_input("Hip (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90])), disabled=disable_controls)
-        location = st.selectbox("Location", df['location'].dropna().unique().tolist() if 'location' in df.columns else ['Unknown'], disabled=disable_controls)
-        submit = st.form_submit_button("Predict", disabled=disable_controls)
+        waist = st.number_input(
+    "Waist (cm)",
+    min_value=30.0,
+    max_value=200.0,
+    value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]))),
+    disabled=disable_controls
+)
 
     if disable_controls:
         st.info("Prediction disabled — train models on the Train Models page to enable real-time predictions.")
