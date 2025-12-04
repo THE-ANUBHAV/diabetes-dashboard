@@ -3,7 +3,7 @@
 DiaGuard Pro — Ultimate (Full) Dashboard
 - Train (SMOTE + Calibrated models)
 - Predict (always-rendering UI; disabled until training)
-- SHAP explanations (TreeExplainer + KernelExplainer)
+- SHAP explanations (TreeExplainer + KernelExplainer) 
 - Universal feature importance (works with calibrated wrappers)
 - AI Doctor Chatbot, PDF/CSV exports, History
 - Robust preprocessing & feature alignment
