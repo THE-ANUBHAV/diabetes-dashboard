@@ -425,104 +425,104 @@ elif page == "Predict":
 
     with st.form("predict_form"):
 
-    c1, c2 = st.columns(2)
-
-    # ---------- COLUMN 1 ----------
-    with c1:
-        age = st.number_input(
-            "Age",
-            min_value=0,
-            max_value=120,
-            value=clamp(safe_median(df['age'] if 'age' in df.columns else pd.Series([50]),50), 0, 120),
-            disabled=disable_controls
-        )
-
-        gender = st.selectbox(
-            "Gender",
-            df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'],
-            disabled=disable_controls
-        )
-
-        weight = st.number_input(
-            "Weight (kg)",
-            min_value=20.0,
-            max_value=200.0,
-            value=clamp(safe_median(df['weight'] if 'weight' in df.columns else pd.Series([75]),75), 20.0, 200.0),
-            disabled=disable_controls
-        )
-
-        height = st.number_input(
-            "Height (cm)",
-            min_value=100.0,
-            max_value=220.0,
-            value=clamp(safe_median(df['height'] if 'height' in df.columns else pd.Series([165]),165), 100.0, 220.0),
-            disabled=disable_controls
-        )
-
-        frame = st.selectbox(
-            "Frame",
-            df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'],
-            disabled=disable_controls
-        )
-
-        hip = st.number_input(
-            "Hip (cm)",
-            min_value=30.0,
-            max_value=200.0,
-            value=clamp(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90]),90), 30.0, 200.0),
-            disabled=disable_controls
-        )
-
-    # ---------- COLUMN 2 ----------
-    with c2:
-        chol = st.number_input(
-            "Cholesterol (chol)",
-            min_value=50.0,
-            max_value=400.0,
-            value=clamp(safe_median(df['chol'] if 'chol' in df.columns else pd.Series([200]),200), 50.0, 400.0),
-            disabled=disable_controls
-        )
-
-        hdl = st.number_input(
-            "HDL",
-            min_value=10.0,
-            max_value=150.0,
-            value=clamp(safe_median(df['hdl'] if 'hdl' in df.columns else pd.Series([40]),40), 10.0, 150.0),
-            disabled=disable_controls
-        )
-
-        bp_sys = st.number_input(
-            "Systolic BP (bp.1s)",
-            min_value=80.0,
-            max_value=220.0,
-            value=clamp(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]),120), 80.0, 220.0),
-            disabled=disable_controls
-        )
-
-        bp_dia = st.number_input(
-            "Diastolic BP (bp.1d)",
-            min_value=40.0,
-            max_value=140.0,
-            value=clamp(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]),80), 40.0, 140.0),
-            disabled=disable_controls
-        )
-
-        waist = st.number_input(
-            "Waist (cm)",
-            min_value=30.0,
-            max_value=200.0,
-            value=clamp(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]),80), 30.0, 200.0),
-            disabled=disable_controls
-        )
-
-        location = st.selectbox(
-            "Location",
-            df['location'].dropna().unique().tolist() if 'location' in df.columns else ['Urban'],
-            disabled=disable_controls
-        )
-
-    # --- REQUIRED SUBMIT BUTTON (FIX) ---
-    submitted = st.form_submit_button("Predict")
+        c1, c2 = st.columns(2)
+    
+        # ---------- COLUMN 1 ----------
+        with c1:
+            age = st.number_input(
+                "Age",
+                min_value=0,
+                max_value=120,
+                value=clamp(safe_median(df['age'] if 'age' in df.columns else pd.Series([50]),50), 0, 120),
+                disabled=disable_controls
+            )
+    
+            gender = st.selectbox(
+                "Gender",
+                df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'],
+                disabled=disable_controls
+            )
+    
+            weight = st.number_input(
+                "Weight (kg)",
+                min_value=20.0,
+                max_value=200.0,
+                value=clamp(safe_median(df['weight'] if 'weight' in df.columns else pd.Series([75]),75), 20.0, 200.0),
+                disabled=disable_controls
+            )
+    
+            height = st.number_input(
+                "Height (cm)",
+                min_value=100.0,
+                max_value=220.0,
+                value=clamp(safe_median(df['height'] if 'height' in df.columns else pd.Series([165]),165), 100.0, 220.0),
+                disabled=disable_controls
+            )
+    
+            frame = st.selectbox(
+                "Frame",
+                df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'],
+                disabled=disable_controls
+            )
+    
+            hip = st.number_input(
+                "Hip (cm)",
+                min_value=30.0,
+                max_value=200.0,
+                value=clamp(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90]),90), 30.0, 200.0),
+                disabled=disable_controls
+            )
+    
+        # ---------- COLUMN 2 ----------
+        with c2:
+            chol = st.number_input(
+                "Cholesterol (chol)",
+                min_value=50.0,
+                max_value=400.0,
+                value=clamp(safe_median(df['chol'] if 'chol' in df.columns else pd.Series([200]),200), 50.0, 400.0),
+                disabled=disable_controls
+            )
+    
+            hdl = st.number_input(
+                "HDL",
+                min_value=10.0,
+                max_value=150.0,
+                value=clamp(safe_median(df['hdl'] if 'hdl' in df.columns else pd.Series([40]),40), 10.0, 150.0),
+                disabled=disable_controls
+            )
+    
+            bp_sys = st.number_input(
+                "Systolic BP (bp.1s)",
+                min_value=80.0,
+                max_value=220.0,
+                value=clamp(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]),120), 80.0, 220.0),
+                disabled=disable_controls
+            )
+    
+            bp_dia = st.number_input(
+                "Diastolic BP (bp.1d)",
+                min_value=40.0,
+                max_value=140.0,
+                value=clamp(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]),80), 40.0, 140.0),
+                disabled=disable_controls
+            )
+    
+            waist = st.number_input(
+                "Waist (cm)",
+                min_value=30.0,
+                max_value=200.0,
+                value=clamp(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]),80), 30.0, 200.0),
+                disabled=disable_controls
+            )
+    
+            location = st.selectbox(
+                "Location",
+                df['location'].dropna().unique().tolist() if 'location' in df.columns else ['Urban'],
+                disabled=disable_controls
+            )
+    
+        # --- REQUIRED SUBMIT BUTTON (FIX) ---
+        submitted = st.form_submit_button("Predict")
 
 
     if disable_controls:
