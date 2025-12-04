@@ -411,7 +411,7 @@ elif page == "Predict":
     # Inputs (form), disabled if no models
     disable_controls = not models_present
 
-   with st.form("predict_form"):
+    with st.form("predict_form"):
     c1, c2 = st.columns(2)
     with c1:
         age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'],50)), disabled=disable_controls)
