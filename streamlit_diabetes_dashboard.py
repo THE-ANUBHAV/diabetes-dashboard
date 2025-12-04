@@ -271,11 +271,24 @@ def train_models_pipeline(df_raw, remove_leakage=True, models_to_train=None):
 
     # XGBoost
     if 'XGBoost' in models_to_train and XGBClassifier is not None:
-        posw = (y_res==0).sum() / max(1, (y_res==1).sum())
-        xgb = XGBClassifier(n_estimators=350, max_depth=5, learning_rate=0.03, subsample=0.8, colsample_bytree=0.8, scale_pos_weight=posw, use_label_encoder=False, eval_metric='logloss', random_s[...] ,
+        posw = (y_res == 0).sum() / max(1, (y_res == 1).sum())  # class weight balance
+    
+        xgb = XGBClassifier(
+            n_estimators=350,
+            max_depth=5,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            scale_pos_weight=posw,
+            use_label_encoder=False,
+            eval_metric='logloss',
+            random_state=RANDOM_STATE
+        )
+    
         xgb_cal = CalibratedClassifierCV(xgb, cv=5, method='sigmoid')
         xgb_cal.fit(X_res, y_res)
         trained['XGBoost'] = xgb_cal
+
 
     # LightGBM
     if 'LightGBM' in models_to_train and LGBMClassifier is not None:
