@@ -1,6 +1,6 @@
-# streamlit_diabetes_dashboard_full.py
+# streamlit_diabetes_dashboard_full_fixed.py
 """
-DiaGuard Pro — Ultimate (Full) Dashboard
+DiaGuard Pro — Ultimate (Full) Dashboard (Fixed)
 - Train (SMOTE + Calibrated models)
 - Predict (always-rendering UI; disabled until training)
 - SHAP explanations (TreeExplainer + KernelExplainer)
@@ -272,7 +272,7 @@ def train_models_pipeline(df_raw, remove_leakage=True, models_to_train=None):
     # XGBoost
     if 'XGBoost' in models_to_train and XGBClassifier is not None:
         posw = (y_res == 0).sum() / max(1, (y_res == 1).sum())  # class weight balance
-    
+
         xgb = XGBClassifier(
             n_estimators=350,
             max_depth=5,
@@ -284,11 +284,10 @@ def train_models_pipeline(df_raw, remove_leakage=True, models_to_train=None):
             eval_metric='logloss',
             random_state=RANDOM_STATE
         )
-    
+
         xgb_cal = CalibratedClassifierCV(xgb, cv=5, method='sigmoid')
         xgb_cal.fit(X_res, y_res)
         trained['XGBoost'] = xgb_cal
-
 
     # LightGBM
     if 'LightGBM' in models_to_train and LGBMClassifier is not None:
@@ -427,34 +426,34 @@ elif page == "Predict":
     with st.form("predict_form"):
         c1, c2 = st.columns(2)
         with c1:
-            age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'],50)), disabled=disable_controls)
+            age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'] if 'age' in df.columns else pd.Series([50]),50)), disabled=disable_controls)
             gender = st.selectbox("Gender", df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'], disabled=disable_controls)
-            weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=float(safe_median(df['weight'],75)), disabled=disable_controls)
-            height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(safe_median(df['height'],165)), disabled=disable_controls)
+            weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=float(safe_median(df['weight'] if 'weight' in df.columns else pd.Series([75]),75)), disabled=disable_controls)
+            height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(safe_median(df['height'] if 'height' in df.columns else pd.Series([165]),165)), disabled=disable_controls)
             frame = st.selectbox("Frame", df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'], disabled=disable_controls)
-            hip = st.number_input("Hip (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90]))), disabled=disable_controls)
+            hip = st.number_input("Hip (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90]),90)), disabled=disable_controls)
         with c2:
-            chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'],200)), disabled=disable_controls)
-            hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'],40)), disabled=disable_controls)
+            chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'] if 'chol' in df.columns else pd.Series([200]),200)), disabled=disable_controls)
+            hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'] if 'hdl' in df.columns else pd.Series([40]),40)), disabled=disable_controls)
             bp_sys = st.number_input(
                 "Systolic BP (bp.1s)",
                 min_value=80.0,
                 max_value=220.0,
-                value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]))),
+                value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]),120)),
                 disabled=disable_controls
             )
             bp_dia = st.number_input(
                 "Diastolic BP (bp.1d)",
                 min_value=40.0,
                 max_value=140.0,
-                value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
+                value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]),80)),
                 disabled=disable_controls
             )
             waist = st.number_input(
                 "Waist (cm)",
                 min_value=30.0,
                 max_value=200.0,
-                value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]))),
+                value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]),80)),
                 disabled=disable_controls
             )
             location = st.selectbox("Location", df['location'].dropna().unique().tolist() if 'location' in df.columns else ['Urban'], disabled=disable_controls)
@@ -466,7 +465,6 @@ elif page == "Predict":
         st.stop()
 
     if submitted:
-        # (put all prediction logic here)
         # Build user input df
         input_raw = pd.DataFrame([{
             'age': age, 'gender': gender, 'height': height, 'weight': weight, 'chol': chol, 'hdl': hdl,
@@ -490,14 +488,19 @@ elif page == "Predict":
         pred_class = int(prob >= 0.5)
         prob_pct = round(prob*100, 2)
 
-        # Summary card
+        # Summary card (fixed safe HTML string usage)
         is_dark = st.get_option("theme.base") == "dark"
         color = "#2ecc71" if prob_pct < 30 else "#f39c12" if prob_pct < 60 else "#e74c3c" if prob_pct < 80 else "#8b0000"
+        summary_html = f"""
+<div style='padding:12px;border-radius:8px;background:{"#0f1720" if is_dark else "#f8fbff"}'>
+    <strong style='font-size:20px'>{prob_pct}%</strong> probability of diabetes<br/>
+    <span style='color:{color};font-weight:700'>
+        {"Very High" if prob_pct>=80 else "High" if prob_pct>=60 else "Moderate" if prob_pct>=30 else "Low"}
+    </span>
+</div>
+"""
         st.markdown(f"### Prediction Summary — {selected_model}  •  Mode: {'Notebook' if not remove_leakage_session else 'Safe'}")
-        st.markdown(f\"\"\"<div style='padding:12px;border-radius:8px;background:{'#0f1720' if is_dark else '#f8fbff'}'>\
-            <strong style='font-size:20px'>{prob_pct}%</strong> probability of diabetes<br/>\
-            <span style='color:{color};font-weight:700'>{'Very High' if prob_pct>=80 else 'High' if prob_pct>=60 else 'Moderate' if prob_pct>=30 else 'Low'}</span>\
-            </div>\"\"\", unsafe_allow_html=True)
+        st.markdown(summary_html, unsafe_allow_html=True)
 
         # Gauge
         gauge = go.Figure(go.Indicator(mode="gauge+number", value=prob_pct, title={"text":"Risk (%)"},
