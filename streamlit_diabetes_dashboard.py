@@ -3,7 +3,7 @@
 DiaGuard Pro — Ultimate (Full) Dashboard
 - Train (SMOTE + Calibrated models)
 - Predict (always-rendering UI; disabled until training)
-- SHAP explanations (TreeExplainer + KernelExplainer) 
+- SHAP explanations (TreeExplainer + KernelExplainer)
 - Universal feature importance (works with calibrated wrappers)
 - AI Doctor Chatbot, PDF/CSV exports, History
 - Robust preprocessing & feature alignment
@@ -272,7 +272,7 @@ def train_models_pipeline(df_raw, remove_leakage=True, models_to_train=None):
     # XGBoost
     if 'XGBoost' in models_to_train and XGBClassifier is not None:
         posw = (y_res==0).sum() / max(1, (y_res==1).sum())
-        xgb = XGBClassifier(n_estimators=350, max_depth=5, learning_rate=0.03, subsample=0.8, colsample_bytree=0.8, scale_pos_weight=posw, use_label_encoder=False, eval_metric='logloss', random_state=RANDOM_STATE)
+        xgb = XGBClassifier(n_estimators=350, max_depth=5, learning_rate=0.03, subsample=0.8, colsample_bytree=0.8, scale_pos_weight=posw, use_label_encoder=False, eval_metric='logloss', random_s[...]
         xgb_cal = CalibratedClassifierCV(xgb, cv=5, method='sigmoid')
         xgb_cal.fit(X_res, y_res)
         trained['XGBoost'] = xgb_cal
@@ -412,240 +412,236 @@ elif page == "Predict":
     disable_controls = not models_present
 
     with st.form("predict_form"):
-    c1, c2 = st.columns(2)
-    with c1:
-        age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'],50)), disabled=disable_controls)
-        gender = st.selectbox("Gender", df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'], disabled=disable_controls)
-        weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=float(safe_median(df['weight'],75)), disabled=disable_controls)
-        height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(safe_median(df['height'],165)), disabled=disable_controls)
-        frame = st.selectbox("Frame", df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'], disabled=disable_controls)
-    with c2:
-        chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'],200)), disabled=disable_controls)
-        hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'],40)), disabled=disable_controls)
-        bp_sys = st.number_input(
-            "Systolic BP (bp.1s)",
-            min_value=80.0,
-            max_value=220.0,
-            value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]))),
-            disabled=disable_controls
-        )
-        bp_dia = st.number_input(
-            "Diastolic BP (bp.1d)",
-            min_value=40.0,
-            max_value=140.0,
-            value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
-            disabled=disable_controls
-        )
-    waist = st.number_input(
-        "Waist (cm)",
-        min_value=30.0,
-        max_value=200.0,
-        value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]))),
-        disabled=disable_controls
-    )
-    # Add submit button here
-    submitted = st.form_submit_button("Predict")
+        c1, c2 = st.columns(2)
+        with c1:
+            age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'],50)), disabled=disable_controls)
+            gender = st.selectbox("Gender", df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'], disabled=disable_controls)
+            weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=float(safe_median(df['weight'],75)), disabled=disable_controls)
+            height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(safe_median(df['height'],165)), disabled=disable_controls)
+            frame = st.selectbox("Frame", df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'], disabled=disable_controls)
+            hip = st.number_input("Hip (cm)", min_value=30.0, max_value=200.0, value=float(safe_median(df['hip'] if 'hip' in df.columns else pd.Series([90]))), disabled=disable_controls)
+        with c2:
+            chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'],200)), disabled=disable_controls)
+            hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'],40)), disabled=disable_controls)
+            bp_sys = st.number_input(
+                "Systolic BP (bp.1s)",
+                min_value=80.0,
+                max_value=220.0,
+                value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]))),
+                disabled=disable_controls
+            )
+            bp_dia = st.number_input(
+                "Diastolic BP (bp.1d)",
+                min_value=40.0,
+                max_value=140.0,
+                value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
+                disabled=disable_controls
+            )
+            waist = st.number_input(
+                "Waist (cm)",
+                min_value=30.0,
+                max_value=200.0,
+                value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]))),
+                disabled=disable_controls
+            )
+            location = st.selectbox("Location", df['location'].dropna().unique().tolist() if 'location' in df.columns else ['Urban'], disabled=disable_controls)
+        # Add submit button here
+        submitted = st.form_submit_button("Predict")
 
-if disable_controls:
-    st.info("Prediction disabled — train models on the Train Models page to enable real-time predictions.")
-    st.stop()
-
-if submitted:
-    # (put all prediction logic here)
-    # Build user input df
-    input_raw = pd.DataFrame([{
-        'age': age, 'gender': gender, 'height': height, 'weight': weight, 'chol': chol, 'hdl': hdl,
-        'bp.1s': bp_sys, 'bp.1d': bp_dia, 'waist': waist, 'hip': hip, 'frame': frame, 'location': location
-    }])
-
-    # Build user input df
-    input_raw = pd.DataFrame([{
-        'age': age, 'gender': gender, 'height': height, 'weight': weight, 'chol': chol, 'hdl': hdl,
-        'bp.1s': bp_sys, 'bp.1d': bp_dia, 'waist': waist, 'hip': hip, 'frame': frame, 'location': location
-    }])
-
-    # Align & scale
-    try:
-        input_scaled, input_unscaled = align_features_for_prediction(input_raw, df_raw, feature_names, scaler, remove_leakage=remove_leakage_session)
-    except Exception as e:
-        st.error(f"Feature alignment failed: {e}")
+    if disable_controls:
+        st.info("Prediction disabled — train models on the Train Models page to enable real-time predictions.")
         st.stop()
 
-    model = models[selected_model]
-    try:
-        prob = float(model.predict_proba(input_scaled)[:,1][0])
-    except Exception:
-        raw = model.decision_function(input_scaled)
-        prob = float(1/(1+np.exp(-raw))[0])
+    if submitted:
+        # (put all prediction logic here)
+        # Build user input df
+        input_raw = pd.DataFrame([{
+            'age': age, 'gender': gender, 'height': height, 'weight': weight, 'chol': chol, 'hdl': hdl,
+            'bp.1s': bp_sys, 'bp.1d': bp_dia, 'waist': waist, 'hip': hip, 'frame': frame, 'location': location
+        }])
 
-    pred_class = int(prob >= 0.5)
-    prob_pct = round(prob*100, 2)
-
-    # Summary card
-    is_dark = st.get_option("theme.base") == "dark"
-    color = "#2ecc71" if prob_pct < 30 else "#f39c12" if prob_pct < 60 else "#e74c3c" if prob_pct < 80 else "#8b0000"
-    st.markdown(f"### Prediction Summary — {selected_model}  •  Mode: {'Notebook' if not remove_leakage_session else 'Safe'}")
-    st.markdown(f"<div style='padding:12px;border-radius:8px;background:{'#0f1720' if is_dark else '#f8fbff'}'>\
-        <strong style='font-size:20px'>{prob_pct}%</strong> probability of diabetes<br/>\
-        <span style='color:{color};font-weight:700'>{'Very High' if prob_pct>=80 else 'High' if prob_pct>=60 else 'Moderate' if prob_pct>=30 else 'Low'}</span>\
-        </div>", unsafe_allow_html=True)
-
-    # Gauge
-    gauge = go.Figure(go.Indicator(mode="gauge+number", value=prob_pct, title={"text":"Risk (%)"},
-                                  gauge={"axis":{"range":[0,100]}, "bar":{"color":color},
-                                         "steps":[{"range":[0,30],"color":"green"},{"range":[30,60],"color":"orange"},{"range":[60,100],"color":"red"}]}))
-    st.plotly_chart(gauge, use_container_width=True)
-
-    # SHAP explanation (robust)
-    st.subheader("Explainability (SHAP) — Local")
-    if not SHAP_AVAILABLE:
-        st.info("Install 'shap' to enable SHAP explanations.")
-    else:
+        # Align & scale
         try:
-            base = getattr(model, 'base_estimator', None) or getattr(model, 'estimator', None) or model
-            if selected_model in ['RandomForest', 'XGBoost', 'LightGBM']:
-                # TreeExplainer expects unscaled values consistent with training raw features
-                # We already have input_unscaled; create explainer with base and compute shap_values
-                explainer = shap.TreeExplainer(base)
-                sv = explainer.shap_values(input_unscaled)
-                # Prepare explanation object
-                if isinstance(sv, list):
-                    shap_vals_class1 = np.asarray(sv[1])[0] if len(sv)>1 else np.asarray(sv[0])[0]
-                    base_val = explainer.expected_value[1] if hasattr(explainer.expected_value, '__len__') and len(explainer.expected_value)>1 else explainer.expected_value
-                else:
-                    shap_vals_class1 = np.asarray(sv)[0]
-                    base_val = explainer.expected_value
-                # Waterfall plot
-                try:
-                    expl = shap.Explanation(values=shap_vals_class1, base_values=base_val, data=input_unscaled.iloc[0].values, feature_names=input_unscaled.columns.tolist())
-                    plt.figure(figsize=(8,4))
-                    shap.plots.waterfall(expl, show=False)
-                    st.pyplot(plt.gcf()); plt.clf()
-                except Exception:
-                    try:
-                        plt.figure(figsize=(8,4)); shap.plots.bar(expl, show=False); st.pyplot(plt.gcf()); plt.clf()
-                    except Exception:
-                        st.info("SHAP plotting failed in this environment.")
-                # interactive force if possible
-                try:
-                    fp = shap.force_plot(base_val, shap_vals_class1, input_unscaled.iloc[0], matplotlib=False)
-                    import streamlit.components.v1 as components
-                    components.html(f"<head>{shap.getjs()}</head><body>{fp.html()}</body>", height=400)
-                except Exception:
-                    pass
-            elif selected_model == 'SVM':
-                st.info("SVM SHAP via KernelExplainer (may be slow). Background sample reduced.")
-                # Build background from training raw (limited)
-                df_temp = pd.concat([input_raw.reset_index(drop=True), df_raw.reset_index(drop=True)], ignore_index=True)
-                X_all_unscaled, _ = preprocessing_no_scale(df_temp, remove_leakage=remove_leakage_session)
-                background = shap.sample(X_all_unscaled, min(100, len(X_all_unscaled)))
-                explainer = shap.KernelExplainer(model.predict_proba, background)
-                user_unscaled = X_all_unscaled.iloc[[0]]
-                shap_vals = explainer.shap_values(user_unscaled)
-                if isinstance(shap_vals, list) and len(shap_vals)>1:
-                    vals = np.asarray(shap_vals[1])[0]
-                    base_val = explainer.expected_value[1]
-                else:
-                    vals = np.asarray(shap_vals).ravel()
-                    base_val = explainer.expected_value
-                expl = shap.Explanation(values=vals, base_values=base_val, data=user_unscaled.iloc[0].values, feature_names=user_unscaled.columns.tolist())
-                try:
-                    plt.figure(figsize=(8,4)); shap.plots.waterfall(expl, show=False); st.pyplot(plt.gcf()); plt.clf()
-                except Exception:
-                    try:
-                        plt.figure(figsize=(8,4)); shap.plots.bar(expl, show=False); st.pyplot(plt.gcf()); plt.clf()
-                    except Exception:
-                        st.info("SHAP plotting failed.")
-                try:
-                    fp = shap.force_plot(base_val, vals, user_unscaled.iloc[0], matplotlib=False)
-                    import streamlit.components.v1 as components
-                    components.html(f"<head>{shap.getjs()}</head><body>{fp.html()}</body>", height=400)
-                except Exception:
-                    pass
-            else:
-                st.info("SHAP not supported for this model.")
+            input_scaled, input_unscaled = align_features_for_prediction(input_raw, df_raw, feature_names, scaler, remove_leakage=remove_leakage_session)
         except Exception as e:
-            st.warning(f"SHAP explanation error: {e}")
+            st.error(f"Feature alignment failed: {e}")
+            st.stop()
 
-    # 3D-like SHAP scatter (top features)
-    st.subheader("SHAP Contributions — 3D-ish Plot")
-    if SHAP_AVAILABLE:
+        model = models[selected_model]
         try:
-            # Create a small Shap contributions array if available
-            # Recompute shap values for user_unscaled if not already computed
-            if selected_model in ['RandomForest','XGBoost','LightGBM']:
-                base_local = getattr(model, 'base_estimator', None) or getattr(model, 'estimator', None) or model
-                expl = shap.TreeExplainer(base_local)
-                sv2 = expl.shap_values(input_unscaled)
-                if isinstance(sv2, list) and len(sv2)>1:
-                    vals = np.asarray(sv2[1])[0]
+            prob = float(model.predict_proba(input_scaled)[:,1][0])
+        except Exception:
+            raw = model.decision_function(input_scaled)
+            prob = float(1/(1+np.exp(-raw))[0])
+
+        pred_class = int(prob >= 0.5)
+        prob_pct = round(prob*100, 2)
+
+        # Summary card
+        is_dark = st.get_option("theme.base") == "dark"
+        color = "#2ecc71" if prob_pct < 30 else "#f39c12" if prob_pct < 60 else "#e74c3c" if prob_pct < 80 else "#8b0000"
+        st.markdown(f"### Prediction Summary — {selected_model}  •  Mode: {'Notebook' if not remove_leakage_session else 'Safe'}")
+        st.markdown(f\"\"\"<div style='padding:12px;border-radius:8px;background:{'#0f1720' if is_dark else '#f8fbff'}'>\
+            <strong style='font-size:20px'>{prob_pct}%</strong> probability of diabetes<br/>\
+            <span style='color:{color};font-weight:700'>{'Very High' if prob_pct>=80 else 'High' if prob_pct>=60 else 'Moderate' if prob_pct>=30 else 'Low'}</span>\
+            </div>\"\"\", unsafe_allow_html=True)
+
+        # Gauge
+        gauge = go.Figure(go.Indicator(mode="gauge+number", value=prob_pct, title={"text":"Risk (%)"},
+                                      gauge={"axis":{"range":[0,100]}, "bar":{"color":color},
+                                             "steps":[{"range":[0,30],"color":"green"},{"range":[30,60],"color":"orange"},{"range":[60,100],"color":"red"}]}))
+        st.plotly_chart(gauge, use_container_width=True)
+
+        # SHAP explanation (robust)
+        st.subheader("Explainability (SHAP) — Local")
+        if not SHAP_AVAILABLE:
+            st.info("Install 'shap' to enable SHAP explanations.")
+        else:
+            try:
+                base = getattr(model, 'base_estimator', None) or getattr(model, 'estimator', None) or model
+                if selected_model in ['RandomForest', 'XGBoost', 'LightGBM']:
+                    # TreeExplainer expects unscaled values consistent with training raw features
+                    # We already have input_unscaled; create explainer with base and compute shap_values
+                    explainer = shap.TreeExplainer(base)
+                    sv = explainer.shap_values(input_unscaled)
+                    # Prepare explanation object
+                    if isinstance(sv, list):
+                        shap_vals_class1 = np.asarray(sv[1])[0] if len(sv)>1 else np.asarray(sv[0])[0]
+                        base_val = explainer.expected_value[1] if hasattr(explainer.expected_value, '__len__') and len(explainer.expected_value)>1 else explainer.expected_value
+                    else:
+                        shap_vals_class1 = np.asarray(sv)[0]
+                        base_val = explainer.expected_value
+                    # Waterfall plot
+                    try:
+                        expl = shap.Explanation(values=shap_vals_class1, base_values=base_val, data=input_unscaled.iloc[0].values, feature_names=input_unscaled.columns.tolist())
+                        plt.figure(figsize=(8,4))
+                        shap.plots.waterfall(expl, show=False)
+                        st.pyplot(plt.gcf()); plt.clf()
+                    except Exception:
+                        try:
+                            plt.figure(figsize=(8,4)); shap.plots.bar(expl, show=False); st.pyplot(plt.gcf()); plt.clf()
+                        except Exception:
+                            st.info("SHAP plotting failed in this environment.")
+                    # interactive force if possible
+                    try:
+                        fp = shap.force_plot(base_val, shap_vals_class1, input_unscaled.iloc[0], matplotlib=False)
+                        import streamlit.components.v1 as components
+                        components.html(f"<head>{shap.getjs()}</head><body>{fp.html()}</body>", height=400)
+                    except Exception:
+                        pass
+                elif selected_model == 'SVM':
+                    st.info("SVM SHAP via KernelExplainer (may be slow). Background sample reduced.")
+                    # Build background from training raw (limited)
+                    df_temp = pd.concat([input_raw.reset_index(drop=True), df_raw.reset_index(drop=True)], ignore_index=True)
+                    X_all_unscaled, _ = preprocessing_no_scale(df_temp, remove_leakage=remove_leakage_session)
+                    background = shap.sample(X_all_unscaled, min(100, len(X_all_unscaled)))
+                    explainer = shap.KernelExplainer(model.predict_proba, background)
+                    user_unscaled = X_all_unscaled.iloc[[0]]
+                    shap_vals = explainer.shap_values(user_unscaled)
+                    if isinstance(shap_vals, list) and len(shap_vals)>1:
+                        vals = np.asarray(shap_vals[1])[0]
+                        base_val = explainer.expected_value[1]
+                    else:
+                        vals = np.asarray(shap_vals).ravel()
+                        base_val = explainer.expected_value
+                    expl = shap.Explanation(values=vals, base_values=base_val, data=user_unscaled.iloc[0].values, feature_names=user_unscaled.columns.tolist())
+                    try:
+                        plt.figure(figsize=(8,4)); shap.plots.waterfall(expl, show=False); st.pyplot(plt.gcf()); plt.clf()
+                    except Exception:
+                        try:
+                            plt.figure(figsize=(8,4)); shap.plots.bar(expl, show=False); st.pyplot(plt.gcf()); plt.clf()
+                        except Exception:
+                            st.info("SHAP plotting failed.")
+                    try:
+                        fp = shap.force_plot(base_val, vals, user_unscaled.iloc[0], matplotlib=False)
+                        import streamlit.components.v1 as components
+                        components.html(f"<head>{shap.getjs()}</head><body>{fp.html()}</body>", height=400)
+                    except Exception:
+                        pass
                 else:
-                    vals = np.asarray(sv2).ravel()
-                df_sh = pd.DataFrame({'feature': input_unscaled.columns, 'shap': vals})
-                df_sh['abs'] = df_sh['shap'].abs()
-                df_sh = df_sh.sort_values('abs', ascending=False).head(12)
-                # 3D-like scatter: x=rank, y=shap, z=abs(shap)
-                fig3d = px.scatter_3d(df_sh, x=df_sh.index, y='shap', z='abs', text='feature', color='shap', size='abs', title='Top SHAP contributions (3D view)')
-                st.plotly_chart(fig3d, use_container_width=True)
+                    st.info("SHAP not supported for this model.")
+            except Exception as e:
+                st.warning(f"SHAP explanation error: {e}")
+
+        # 3D-like SHAP scatter (top features)
+        st.subheader("SHAP Contributions — 3D-ish Plot")
+        if SHAP_AVAILABLE:
+            try:
+                # Create a small Shap contributions array if available
+                # Recompute shap values for user_unscaled if not already computed
+                if selected_model in ['RandomForest','XGBoost','LightGBM']:
+                    base_local = getattr(model, 'base_estimator', None) or getattr(model, 'estimator', None) or model
+                    expl = shap.TreeExplainer(base_local)
+                    sv2 = expl.shap_values(input_unscaled)
+                    if isinstance(sv2, list) and len(sv2)>1:
+                        vals = np.asarray(sv2[1])[0]
+                    else:
+                        vals = np.asarray(sv2).ravel()
+                    df_sh = pd.DataFrame({'feature': input_unscaled.columns, 'shap': vals})
+                    df_sh['abs'] = df_sh['shap'].abs()
+                    df_sh = df_sh.sort_values('abs', ascending=False).head(12)
+                    # 3D-like scatter: x=rank, y=shap, z=abs(shap)
+                    fig3d = px.scatter_3d(df_sh, x=df_sh.index, y='shap', z='abs', text='feature', color='shap', size='abs', title='Top SHAP contributions (3D view)')
+                    st.plotly_chart(fig3d, use_container_width=True)
+            except Exception:
+                pass
+
+        # Doctor recommendations
+        st.subheader("Doctor-style Recommendations")
+        recs = []
+        try:
+            wt = float(input_raw.get('weight',0).iloc[0]); ht = float(input_raw.get('height',0).iloc[0])
+            bmi = wt/((ht/100)**2) if ht>0 else np.nan
+        except Exception:
+            bmi = np.nan
+        if not np.isnan(bmi):
+            if bmi < 18.5: recs.append("Underweight: consider nutritional assessment.")
+            elif bmi <25: recs.append("Normal BMI: maintain healthy habits.")
+            elif bmi <30: recs.append("Overweight: aim for 5-10% weight loss.")
+            else: recs.append("Obese: clinician evaluation and weight management recommended.")
+        try:
+            s = float(input_raw.get('bp.1s', np.nan).iloc[0]); d = float(input_raw.get('bp.1d', np.nan).iloc[0])
+            if not np.isnan(s) and not np.isnan(d):
+                if s<120 and d<80: recs.append("BP normal: routine monitoring.")
+                elif s<130: recs.append("BP elevated: lifestyle changes advised.")
+                elif s<140: recs.append("Stage 1 HTN: clinician review.")
+                else: recs.append("Stage 2 HTN: prompt medical attention.")
         except Exception:
             pass
+        try:
+            cholv = float(input_raw.get('chol', np.nan).iloc[0])
+            if not np.isnan(cholv):
+                if cholv<200: recs.append("Cholesterol desirable.")
+                elif cholv<240: recs.append("Borderline high cholesterol: diet & exercise.")
+                else: recs.append("High cholesterol: consider lipid panel & clinician.")
+        except Exception:
+            pass
+        if prob_pct >= 80:
+            recs.append("Immediate: order HbA1c and fasting glucose; seek urgent clinical evaluation.")
+        elif prob_pct >= 60:
+            recs.append("Consider early clinical screening (HbA1c) and lifestyle changes.")
+        elif prob_pct >= 30:
+            recs.append("Increase monitoring and preventive lifestyle changes.")
+        else:
+            recs.append("Routine checkups recommended; maintain healthy lifestyle.")
 
-    # Doctor recommendations
-    st.subheader("Doctor-style Recommendations")
-    recs = []
-    try:
-        wt = float(input_raw.get('weight',0).iloc[0]); ht = float(input_raw.get('height',0).iloc[0])
-        bmi = wt/((ht/100)**2) if ht>0 else np.nan
-    except Exception:
-        bmi = np.nan
-    if not np.isnan(bmi):
-        if bmi < 18.5: recs.append("Underweight: consider nutritional assessment.")
-        elif bmi <25: recs.append("Normal BMI: maintain healthy habits.")
-        elif bmi <30: recs.append("Overweight: aim for 5-10% weight loss.")
-        else: recs.append("Obese: clinician evaluation and weight management recommended.")
-    try:
-        s = float(input_raw.get('bp.1s', np.nan).iloc[0]); d = float(input_raw.get('bp.1d', np.nan).iloc[0])
-        if not np.isnan(s) and not np.isnan(d):
-            if s<120 and d<80: recs.append("BP normal: routine monitoring.")
-            elif s<130: recs.append("BP elevated: lifestyle changes advised.")
-            elif s<140: recs.append("Stage 1 HTN: clinician review.")
-            else: recs.append("Stage 2 HTN: prompt medical attention.")
-    except Exception:
-        pass
-    try:
-        cholv = float(input_raw.get('chol', np.nan).iloc[0])
-        if not np.isnan(cholv):
-            if cholv<200: recs.append("Cholesterol desirable.")
-            elif cholv<240: recs.append("Borderline high cholesterol: diet & exercise.")
-            else: recs.append("High cholesterol: consider lipid panel & clinician.")
-    except Exception:
-        pass
-    if prob_pct >= 80:
-        recs.append("Immediate: order HbA1c and fasting glucose; seek urgent clinical evaluation.")
-    elif prob_pct >= 60:
-        recs.append("Consider early clinical screening (HbA1c) and lifestyle changes.")
-    elif prob_pct >= 30:
-        recs.append("Increase monitoring and preventive lifestyle changes.")
-    else:
-        recs.append("Routine checkups recommended; maintain healthy lifestyle.")
+        for r in recs:
+            st.write("- " + r)
 
-    for r in recs:
-        st.write("- " + r)
+        # Save to history
+        history = st.session_state.get('history', [])
+        entry = input_raw.copy()
+        entry['predicted_class'] = pred_class
+        entry['predicted_prob'] = prob
+        entry['model'] = selected_model
+        entry['timestamp'] = datetime.now().isoformat()
+        st.session_state['history'] = history + [entry.to_dict(orient='records')[0]]
 
-    # Save to history
-    history = st.session_state.get('history', [])
-    entry = input_raw.copy()
-    entry['predicted_class'] = pred_class
-    entry['predicted_prob'] = prob
-    entry['model'] = selected_model
-    entry['timestamp'] = datetime.now().isoformat()
-    st.session_state['history'] = history + [entry.to_dict(orient='records')[0]]
-
-    # Download
-    csv = input_raw.copy(); csv['predicted_class'] = pred_class; csv['predicted_prob'] = prob
-    st.download_button("Download prediction (CSV)", csv.to_csv(index=False).encode('utf-8'), file_name='prediction.csv', mime='text/csv')
-    pdf = generate_pdf_report(input_raw, pred_class, prob, ("Very High" if prob_pct>=80 else "High" if prob_pct>=60 else "Moderate" if prob_pct>=30 else "Low"), recs)
-    st.download_button("Download PDF report", pdf, file_name='diaguard_report.pdf', mime='application/pdf')
+        # Download
+        csv = input_raw.copy(); csv['predicted_class'] = pred_class; csv['predicted_prob'] = prob
+        st.download_button("Download prediction (CSV)", csv.to_csv(index=False).encode('utf-8'), file_name='prediction.csv', mime='text/csv')
+        pdf = generate_pdf_report(input_raw, pred_class, prob, ("Very High" if prob_pct>=80 else "High" if prob_pct>=60 else "Moderate" if prob_pct>=30 else "Low"), recs)
+        st.download_button("Download PDF report", pdf, file_name='diaguard_report.pdf', mime='application/pdf')
 
 # -------------------- MODEL COMPARISON (visuals) --------------------
 elif page == "Model Comparison":
