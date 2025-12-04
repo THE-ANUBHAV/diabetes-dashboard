@@ -411,44 +411,52 @@ elif page == "Predict":
     # Inputs (form), disabled if no models
     disable_controls = not models_present
 
-    with st.form("predict_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'],50)), disabled=disable_controls)
-            gender = st.selectbox("Gender", df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'], disabled=disable_controls)
-            weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=float(safe_median(df['weight'],75)), disabled=disable_controls)
-            height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(safe_median(df['height'],165)), disabled=disable_controls)
-            frame = st.selectbox("Frame", df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'], disabled=disable_controls)
-        with c2:
-            chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'],200)), disabled=disable_controls)
-            hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'],40)), disabled=disable_controls)
-            # ✅ FIXED SYSTOLIC BP (parentheses and arguments correct)
-            bp_sys = st.number_input(
-                "Systolic BP (bp.1s)",
-                min_value=80.0,
-                max_value=220.0,
-                value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]))),
-                disabled=disable_controls
-            )
-            # ✅ FIXED DIASTOLIC BP (parentheses and arguments correct)
-            bp_dia = st.number_input(
-                "Diastolic BP (bp.1d)",
-                min_value=40.0,
-                max_value=140.0,
-                value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
-                disabled=disable_controls
-            )
-        waist = st.number_input(
-    "Waist (cm)",
-    min_value=30.0,
-    max_value=200.0,
-    value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]))),
-    disabled=disable_controls
-)
+   with st.form("predict_form"):
+    c1, c2 = st.columns(2)
+    with c1:
+        age = st.number_input("Age", min_value=0, max_value=120, value=int(safe_median(df['age'],50)), disabled=disable_controls)
+        gender = st.selectbox("Gender", df['gender'].dropna().unique().tolist() if 'gender' in df.columns else ['M'], disabled=disable_controls)
+        weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=float(safe_median(df['weight'],75)), disabled=disable_controls)
+        height = st.number_input("Height (cm)", min_value=100.0, max_value=220.0, value=float(safe_median(df['height'],165)), disabled=disable_controls)
+        frame = st.selectbox("Frame", df['frame'].dropna().unique().tolist() if 'frame' in df.columns else ['M'], disabled=disable_controls)
+    with c2:
+        chol = st.number_input("Cholesterol (chol)", min_value=50.0, max_value=400.0, value=float(safe_median(df['chol'],200)), disabled=disable_controls)
+        hdl = st.number_input("HDL", min_value=10.0, max_value=150.0, value=float(safe_median(df['hdl'],40)), disabled=disable_controls)
+        bp_sys = st.number_input(
+            "Systolic BP (bp.1s)",
+            min_value=80.0,
+            max_value=220.0,
+            value=float(safe_median(df['bp.1s'] if 'bp.1s' in df.columns else pd.Series([120]))),
+            disabled=disable_controls
+        )
+        bp_dia = st.number_input(
+            "Diastolic BP (bp.1d)",
+            min_value=40.0,
+            max_value=140.0,
+            value=float(safe_median(df['bp.1d'] if 'bp.1d' in df.columns else pd.Series([80]))),
+            disabled=disable_controls
+        )
+    waist = st.number_input(
+        "Waist (cm)",
+        min_value=30.0,
+        max_value=200.0,
+        value=float(safe_median(df['waist'] if 'waist' in df.columns else pd.Series([80]))),
+        disabled=disable_controls
+    )
+    # Add submit button here
+    submitted = st.form_submit_button("Predict")
 
-    if disable_controls:
-        st.info("Prediction disabled — train models on the Train Models page to enable real-time predictions.")
-        st.stop()
+if disable_controls:
+    st.info("Prediction disabled — train models on the Train Models page to enable real-time predictions.")
+    st.stop()
+
+if submitted:
+    # (put all prediction logic here)
+    # Build user input df
+    input_raw = pd.DataFrame([{
+        'age': age, 'gender': gender, 'height': height, 'weight': weight, 'chol': chol, 'hdl': hdl,
+        'bp.1s': bp_sys, 'bp.1d': bp_dia, 'waist': waist, 'hip': hip, 'frame': frame, 'location': location
+    }])
 
     # Build user input df
     input_raw = pd.DataFrame([{
